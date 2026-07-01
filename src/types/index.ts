@@ -165,6 +165,7 @@ export interface ArchiveMetadata {
 /** Messages exchanged between content script, background, popup, and options. */
 export type ExtensionMessage =
   | { type: "PING" }
+  | { type: "ERROR"; message: string }
   | { type: "DETECT_SKOOL"; result?: { isSkool: boolean; isClassroom: boolean } }
   | { type: "SCAN_COURSE_REQUEST" }
   | { type: "SCAN_COURSE_RESULT"; course: CourseSummary }

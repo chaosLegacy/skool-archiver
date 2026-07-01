@@ -1,9 +1,13 @@
 import type { ExtensionMessage } from "@/types";
 
-export function sendRuntimeMessage<T extends ExtensionMessage>(
+export async function sendRuntimeMessage<T extends ExtensionMessage>(
   message: ExtensionMessage
 ): Promise<T> {
-  return chrome.runtime.sendMessage(message) as Promise<T>;
+  const response = (await chrome.runtime.sendMessage(message)) as ExtensionMessage | undefined;
+  if (response?.type === "ERROR") {
+    throw new Error(response.message);
+  }
+  return response as T;
 }
 
 export function onRuntimeMessage(

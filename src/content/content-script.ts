@@ -8,7 +8,9 @@ chrome.runtime.onMessage.addListener(
     handleMessage(message)
       .then(sendResponse)
       .catch((error: unknown) => {
+        const errorMessage = error instanceof Error ? error.message : String(error);
         console.error("Skool Archiver content script error", error);
+        sendResponse({ type: "ERROR", message: errorMessage });
       });
     return true;
   }

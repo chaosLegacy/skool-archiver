@@ -10,7 +10,9 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, sendRes
   handleMessage(message, sender)
     .then(sendResponse)
     .catch((error: unknown) => {
-      sendResponse({ error: error instanceof Error ? error.message : String(error) });
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      console.error("Skool Archiver background error", error);
+      sendResponse({ type: "ERROR", message: errorMessage });
     });
   return true;
 });
