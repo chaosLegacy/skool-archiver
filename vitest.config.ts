@@ -8,6 +8,9 @@ export default defineConfig({
   },
   test: {
     environment: "jsdom",
+    environmentOptions: {
+      jsdom: { url: "https://www.skool.com/" }
+    },
     include: ["src/**/*.test.ts"]
   }
 });

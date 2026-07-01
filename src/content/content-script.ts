@@ -1,4 +1,5 @@
 import { getExtractorForUrl } from "@/extractors";
+import { clickModuleEntry, findModuleEntries, scanVisibleLessons } from "@/extractors/skool/scanner";
 import type { ExtensionMessage, ExtractedLesson } from "@/types";
 
 const extractor = getExtractorForUrl(window.location.href);
@@ -27,12 +28,15 @@ async function handleMessage(message: ExtensionMessage): Promise<ExtensionMessag
         }
       };
 
-    case "SCAN_COURSE_REQUEST": {
-      if (!extractor) throw new Error("This page is not a Skool classroom.");
-      const course = await extractor.scanCourse();
-      if (!course) throw new Error("Could not find any modules/lessons on this page.");
-      return { type: "SCAN_COURSE_RESULT", course };
-    }
+    case "GET_MODULE_ENTRIES":
+      return { type: "MODULE_ENTRIES_RESULT", entries: findModuleEntries() };
+
+    case "CLICK_MODULE_ENTRY":
+      clickModuleEntry(message.index);
+      return { type: "PING" };
+
+    case "SCAN_VISIBLE_LESSONS_REQUEST":
+      return { type: "VISIBLE_LESSONS_RESULT", lessons: scanVisibleLessons() };
 
     case "EXTRACT_LESSON_REQUEST": {
       if (!extractor) throw new Error("This page is not a Skool classroom.");

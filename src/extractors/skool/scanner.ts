@@ -1,7 +1,4 @@
-import type { CourseSummary, LessonMeta, ModuleSummary } from "@/types";
-import { attrOf, textOf, toAbsoluteUrl } from "@/utils/dom";
-import { idFromUrl, slugify } from "@/utils/id";
-import { SKOOL_SELECTORS, querySelectorAllFirst, querySelectorFirst } from "./selectors";
+import { textOf, toAbsoluteUrl } from "@/utils/dom";
 
 export function isSkoolHost(url: string): boolean {
   return /(^|\.)skool\.com$/i.test(new URL(url).hostname);
@@ -11,57 +8,64 @@ export function isClassroomPage(url = window.location.href): boolean {
   return isSkoolHost(url) && /\/classroom(\/|$)/.test(new URL(url).pathname);
 }
 
-/** Walks the classroom sidebar/module list to build the full lesson tree.
- *  Runs entirely against the already-rendered DOM of the page the user is
- *  logged into — no navigation or additional requests are made here. */
-export function scanCourseFromDom(): CourseSummary | null {
-  const root = querySelectorFirst(document, SKOOL_SELECTORS.classroomRoot);
-  if (!root) return null;
+/**
+ * Skool's classroom root page (`/<group>/classroom`) renders each module as a
+ * `role="button"` draggable card with no `href` at all — the navigation is a
+ * JS-only click handler, so there's nothing to scan statically. This finds
+ * those cards and returns just their visible title/description text; the
+ * background orchestrator drives an actual click + navigation per card (see
+ * background/moduleScanner.ts) since only it can survive/force a real page
+ * navigation.
+ */
+export function findModuleEntries(): { index: number; title: string }[] {
+  const cards = Array.from(
+    document.querySelectorAll('[role="button"][aria-roledescription="sortable"]')
+  );
+  return cards
+    .map((card, index) => {
+      // Leaf elements in document order approximate innerText's line-by-line
+      // reading order without relying on innerText (unsupported in jsdom).
+      const leafTexts = Array.from(card.querySelectorAll<HTMLElement>("*"))
+        .filter((el) => el.children.length === 0)
+        .map((el) => el.textContent?.trim() ?? "")
+        .filter((text) => text.length > 0 && !/^\d+%/.test(text));
+      const title = leafTexts[0];
+      return title ? { index, title } : null;
+    })
+    .filter((entry): entry is { index: number; title: string } => entry !== null);
+}
 
-  const courseTitleEl = document.querySelector("h1");
-  const courseTitle = textOf(courseTitleEl) || document.title || "Untitled Course";
-  const courseUrl = window.location.href;
+export function clickModuleEntry(index: number): void {
+  const cards = document.querySelectorAll<HTMLElement>(
+    '[role="button"][aria-roledescription="sortable"]'
+  );
+  const card = cards[index];
+  if (!card) throw new Error(`No module card at index ${index}`);
+  card.click();
+}
 
-  const groups = querySelectorAllFirst(root, SKOOL_SELECTORS.moduleGroup);
-  const modules: ModuleSummary[] = [];
+/**
+ * The one durable selector across Skool's classroom UI: every lesson link,
+ * wherever it appears (root grid, module lesson list, etc.), carries a
+ * `?md=<lessonId>` query param. Hashed styled-components class names are not
+ * relied on here at all.
+ */
+export function scanVisibleLessons(): { title: string; url: string }[] {
+  const anchors = Array.from(document.querySelectorAll<HTMLAnchorElement>('a[href*="?md="]'));
+  const seen = new Set<string>();
+  const lessons: { title: string; url: string }[] = [];
 
-  const groupSource = groups.length ? groups : [root];
+  for (const anchor of anchors) {
+    const href = anchor.getAttribute("href");
+    if (!href) continue;
+    const url = toAbsoluteUrl(href);
+    if (seen.has(url)) continue;
+    seen.add(url);
 
-  groupSource.forEach((group, groupIndex) => {
-    const titleEl = querySelectorFirst(group, SKOOL_SELECTORS.moduleTitle);
-    const moduleTitle = textOf(titleEl) || `Module ${groupIndex + 1}`;
-    const moduleId = `module_${groupIndex}_${slugify(moduleTitle)}`;
+    const titleEl = anchor.querySelector<HTMLElement>("[title]");
+    const title = titleEl?.getAttribute("title") || textOf(anchor);
+    lessons.push({ title: title || "Untitled Lesson", url });
+  }
 
-    const lessonLinks = querySelectorAllFirst(group, SKOOL_SELECTORS.lessonLink) as HTMLAnchorElement[];
-    const lessons: LessonMeta[] = lessonLinks
-      .map((a, lessonIndex) => {
-        const href = attrOf(a, "href");
-        if (!href) return null;
-        const url = toAbsoluteUrl(href);
-        const title = textOf(a) || `Lesson ${lessonIndex + 1}`;
-        const meta: LessonMeta = {
-          id: idFromUrl(url),
-          title,
-          url,
-          moduleId,
-          moduleTitle,
-          order: lessonIndex
-        };
-        return meta;
-      })
-      .filter((l): l is LessonMeta => l !== null);
-
-    if (lessons.length > 0) {
-      modules.push({ id: moduleId, title: moduleTitle, order: groupIndex, lessons });
-    }
-  });
-
-  if (modules.length === 0) return null;
-
-  return {
-    id: idFromUrl(courseUrl.split("?")[0] ?? courseUrl),
-    title: courseTitle,
-    url: courseUrl,
-    modules
-  };
+  return lessons;
 }

@@ -89,10 +89,13 @@ that implements `PlatformExtractor` and registering it in
 
 ## Known limitations
 
-- Skool's classroom UI is a client-rendered app with class names that can
-  change between deploys. Selectors live in `extractors/skool/selectors.ts`
-  with layered fallbacks; if scanning/extraction stops matching content after
-  a Skool UI update, that's the first file to check.
+- Skool's classroom root page renders modules as click-only cards with no
+  `href` — there's nothing to scan statically. `background/moduleScanner.ts`
+  discovers them by actually clicking each card and forcing the tab back to
+  the root URL between clicks (see the doc comment there). Lesson links and
+  extraction key off the durable `?md=` query param and structural heuristics
+  in `extractors/skool/scanner.ts` / `lessonExtractor.ts` rather than hashed
+  class names, since those shift between Skool deploys.
 - Only videos the browser can already fetch as a normal file (a direct
   `<video src>` that isn't a blob/MediaSource stream) are downloaded. Embedded
   YouTube/Vimeo/Loom/Wistia players and DRM/adaptive-streamed HTML5 video are

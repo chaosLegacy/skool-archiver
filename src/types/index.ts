@@ -169,6 +169,17 @@ export type ExtensionMessage =
   | { type: "DETECT_SKOOL"; result?: { isSkool: boolean; isClassroom: boolean } }
   | { type: "SCAN_COURSE_REQUEST" }
   | { type: "SCAN_COURSE_RESULT"; course: CourseSummary }
+  // Low-level steps used by the background orchestrator to discover modules
+  // that only exist as click-driven (hrefless) cards on the classroom root
+  // page — see background/moduleScanner.ts.
+  | { type: "GET_MODULE_ENTRIES" }
+  | { type: "MODULE_ENTRIES_RESULT"; entries: { index: number; title: string }[] }
+  | { type: "CLICK_MODULE_ENTRY"; index: number }
+  | { type: "SCAN_VISIBLE_LESSONS_REQUEST" }
+  | {
+      type: "VISIBLE_LESSONS_RESULT";
+      lessons: { title: string; url: string }[];
+    }
   | { type: "EXTRACT_LESSON_REQUEST"; lesson: LessonMeta }
   | { type: "EXTRACT_LESSON_RESULT"; lesson: ExtractedLesson }
   | { type: "START_ARCHIVE"; courseId: string }

@@ -1,8 +1,9 @@
 import { getCurrentJob, getJob, saveJob } from "@/storage/jobStore";
 import { getSettings, saveSettings } from "@/storage/settingsStore";
-import type { CourseSummary, ExtensionMessage } from "@/types";
+import type { ExtensionMessage } from "@/types";
+import { scanSkoolCourse } from "./moduleScanner";
 import { ArchivePipeline } from "./pipeline";
-import { broadcastMessage, sendToTab } from "./tabMessaging";
+import { broadcastMessage } from "./tabMessaging";
 
 let activePipeline: ArchivePipeline | null = null;
 
@@ -25,17 +26,20 @@ async function handleMessage(
     case "SCAN_COURSE_REQUEST": {
       const tabId = sender.tab?.id ?? (await getActiveTabId());
       if (!tabId) throw new Error("No active Skool tab found");
-      return sendToTab(tabId, { type: "SCAN_COURSE_REQUEST" });
+      const tab = await chrome.tabs.get(tabId);
+      if (!tab.url) throw new Error("Could not read the current tab's URL");
+      const course = await scanSkoolCourse(tabId, tab.url);
+      return { type: "SCAN_COURSE_RESULT", course };
     }
 
     case "START_ARCHIVE": {
       const tabId = await getActiveTabId();
       if (!tabId) throw new Error("No active Skool tab found");
-      const scan = await sendToTab<{ type: "SCAN_COURSE_RESULT"; course: CourseSummary }>(tabId, {
-        type: "SCAN_COURSE_REQUEST"
-      });
+      const tab = await chrome.tabs.get(tabId);
+      if (!tab.url) throw new Error("Could not read the current tab's URL");
+      const course = await scanSkoolCourse(tabId, tab.url);
       const settings = await getSettings();
-      activePipeline = new ArchivePipeline(scan.course, tabId, settings);
+      activePipeline = new ArchivePipeline(course, tabId, settings);
       await saveJob(activePipeline.job);
       void activePipeline.run().catch((error: unknown) => {
         broadcastMessage({ type: "JOB_STATE_UPDATE", job: activePipeline!.job });
