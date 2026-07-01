@@ -1,9 +1,10 @@
+import { sleep } from "@/utils/time";
 import type { ExtensionMessage } from "@/types";
 
-export function sendToTab<T extends ExtensionMessage>(
+function sendOnce<T extends ExtensionMessage>(
   tabId: number,
   message: ExtensionMessage,
-  timeoutMs = 30000
+  timeoutMs: number
 ): Promise<T> {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
@@ -23,6 +24,35 @@ export function sendToTab<T extends ExtensionMessage>(
       resolve(response as T);
     });
   });
+}
+
+const NO_RECEIVER_ERROR = /Receiving end does not exist|Could not establish connection/i;
+
+/** Right after a navigation, `tabs.onUpdated` can report `status: complete`
+ *  slightly before a freshly-injected content script has registered its
+ *  message listener — the first send lands in that gap and Chrome reports
+ *  it as "Could not establish connection" rather than queuing it. Retrying
+ *  a few times with a short delay rides out that race instead of failing
+ *  the whole lesson over a timing fluke. */
+export async function sendToTab<T extends ExtensionMessage>(
+  tabId: number,
+  message: ExtensionMessage,
+  timeoutMs = 30000,
+  retries = 5,
+  retryDelayMs = 400
+): Promise<T> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      return await sendOnce<T>(tabId, message, timeoutMs);
+    } catch (error) {
+      lastError = error;
+      const isNoReceiver = error instanceof Error && NO_RECEIVER_ERROR.test(error.message);
+      if (!isNoReceiver || attempt === retries) throw error;
+      await sleep(retryDelayMs);
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error("Failed to message tab");
 }
 
 export function waitForTabComplete(tabId: number, timeoutMs = 20000): Promise<void> {

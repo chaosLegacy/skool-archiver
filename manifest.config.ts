@@ -33,6 +33,10 @@ export default defineManifest({
     }
   ],
   permissions: ["storage", "downloads", "unlimitedStorage", "activeTab", "scripting"],
-  host_permissions: ["https://www.skool.com/*", "https://skool.com/*"],
+  // Skool serves images/videos from asset subdomains (e.g. assets.skool.com),
+  // distinct from the www.skool.com/skool.com pages the content script runs
+  // on. Fetching those from the background needs their own host permission
+  // or it hits normal cross-origin restrictions ("Failed to fetch").
+  host_permissions: ["https://www.skool.com/*", "https://skool.com/*", "https://*.skool.com/*"],
   minimum_chrome_version: "114"
 });
