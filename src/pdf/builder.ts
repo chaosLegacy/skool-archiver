@@ -16,6 +16,40 @@ const COLORS = {
   border: rgb(0.8, 0.8, 0.82)
 };
 
+/** pdf-lib's built-in standard fonts only support WinAnsi encoding —
+ *  drawText/widthOfTextAtSize throw for anything outside it (emoji, CJK,
+ *  etc.), which would otherwise abort the whole PDF partway through. A naive
+ *  codepoint cutoff (e.g. <=0xFF) is wrong: WinAnsi/CP1252 also covers
+ *  higher codepoints it commonly needs, like the em dash (—, U+2014) and
+ *  ellipsis (…, U+2026) already used elsewhere in this file. Asking the font
+ *  itself whether a character encodes is the only reliable check. All three
+ *  standard fonts used here share the same (non-symbolic) WinAnsi table, so
+ *  testing against one is representative for all of them. */
+function isWinAnsiEncodable(font: PDFFont, ch: string): boolean {
+  try {
+    font.widthOfTextAtSize(ch, 10);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function sanitizePdfText(font: PDFFont, text: string): string {
+  return Array.from(text)
+    .map((ch) => (isWinAnsiEncodable(font, ch) ? ch : ""))
+    .join("")
+    .replace(/[^\S\n]+/g, " ")
+    .trim();
+}
+
+/** Same encoding guard as sanitizePdfText, but preserves whitespace/structure
+ *  since code blocks depend on exact spacing. */
+function sanitizePdfCodeLine(font: PDFFont, line: string): string {
+  return Array.from(line)
+    .map((ch) => (isWinAnsiEncodable(font, ch) ? ch : "?"))
+    .join("");
+}
+
 interface PendingLink {
   page: PDFPage;
   x: number;
@@ -55,7 +89,7 @@ export class PdfBuilder {
     this.page = this.doc.addPage([PAGE_WIDTH, PAGE_HEIGHT]);
     this.cursorY = PAGE_HEIGHT - MARGIN - HEADER_HEIGHT;
     if (this.headerText) {
-      this.page.drawText(this.headerText, {
+      this.page.drawText(sanitizePdfText(this.fontRegular, this.headerText), {
         x: MARGIN,
         y: PAGE_HEIGHT - MARGIN + 8,
         size: 9,
@@ -73,7 +107,7 @@ export class PdfBuilder {
 
   addTitleBlock(title: string, moduleTitle: string, meta: string[]): void {
     this.ensureSpace(90);
-    this.page.drawText(moduleTitle.toUpperCase(), {
+    this.page.drawText(sanitizePdfText(this.fontRegular, moduleTitle).toUpperCase(), {
       x: MARGIN,
       y: this.cursorY,
       size: 10,
@@ -84,7 +118,7 @@ export class PdfBuilder {
     this.wrapText(title, this.fontBold, 22, COLORS.heading);
     this.cursorY -= 6;
     if (meta.length) {
-      this.page.drawText(meta.join("  ·  "), {
+      this.page.drawText(sanitizePdfText(this.fontRegular, meta.join("  ·  ")), {
         x: MARGIN,
         y: this.cursorY,
         size: 9,
@@ -137,14 +171,20 @@ export class PdfBuilder {
   }
 
   addCodeBlock(code: string, language?: string): void {
-    const lines = code.split("\n");
+    const lines = code.split("\n").map((line) => sanitizePdfCodeLine(this.fontRegular, line));
     const lineHeight = 12;
     const padding = 8;
     const blockHeight = lines.length * lineHeight + padding * 2;
     this.ensureSpace(Math.min(blockHeight, PAGE_HEIGHT));
 
     if (language) {
-      this.page.drawText(language, { x: MARGIN, y: this.cursorY, size: 8, font: this.fontRegular, color: COLORS.muted });
+      this.page.drawText(sanitizePdfText(this.fontRegular, language), {
+        x: MARGIN,
+        y: this.cursorY,
+        size: 8,
+        font: this.fontRegular,
+        color: COLORS.muted
+      });
       this.cursorY -= 12;
     }
 
@@ -186,13 +226,16 @@ export class PdfBuilder {
 
     const drawRow = (cells: string[], bold: boolean, y: number): void => {
       cells.forEach((cell, i) => {
-        this.page.drawText(truncateToWidth(cell, colWidth - 8, bold ? this.fontBold : this.fontRegular, 9.5), {
-          x: MARGIN + i * colWidth + 4,
-          y: y + 6,
-          size: 9.5,
-          font: bold ? this.fontBold : this.fontRegular,
-          color: COLORS.text
-        });
+        this.page.drawText(
+          truncateToWidth(sanitizePdfText(this.fontRegular, cell), colWidth - 8, bold ? this.fontBold : this.fontRegular, 9.5),
+          {
+            x: MARGIN + i * colWidth + 4,
+            y: y + 6,
+            size: 9.5,
+            font: bold ? this.fontBold : this.fontRegular,
+            color: COLORS.text
+          }
+        );
       });
       this.page.drawLine({
         start: { x: MARGIN, y },
@@ -225,7 +268,13 @@ export class PdfBuilder {
       this.page.drawImage(image, { x: MARGIN, y: this.cursorY, width, height });
       if (caption) {
         this.cursorY -= 12;
-        this.page.drawText(caption, { x: MARGIN, y: this.cursorY, size: 8.5, font: this.fontRegular, color: COLORS.muted });
+        this.page.drawText(sanitizePdfText(this.fontRegular, caption), {
+          x: MARGIN,
+          y: this.cursorY,
+          size: 8.5,
+          font: this.fontRegular,
+          color: COLORS.muted
+        });
       }
       this.cursorY -= 10;
     } catch {
@@ -235,8 +284,15 @@ export class PdfBuilder {
 
   addLink(text: string, url: string): void {
     this.ensureSpace(18);
-    const width = this.fontRegular.widthOfTextAtSize(text, 10.5);
-    this.page.drawText(text, { x: MARGIN, y: this.cursorY, size: 10.5, font: this.fontRegular, color: COLORS.link });
+    const safeText = sanitizePdfText(this.fontRegular, text) || url;
+    const width = this.fontRegular.widthOfTextAtSize(safeText, 10.5);
+    this.page.drawText(safeText, {
+      x: MARGIN,
+      y: this.cursorY,
+      size: 10.5,
+      font: this.fontRegular,
+      color: COLORS.link
+    });
     this.links.push({ page: this.page, x: MARGIN, y: this.cursorY, width, height: 12, url });
     this.cursorY -= 16;
   }
@@ -260,7 +316,7 @@ export class PdfBuilder {
   ): void {
     const indent = opts.indent ?? 0;
     const maxWidth = CONTENT_WIDTH - indent;
-    const words = text.split(/\s+/).filter(Boolean);
+    const words = sanitizePdfText(this.fontRegular, text).split(/\s+/).filter(Boolean);
     let line = "";
 
     const flush = (): void => {
@@ -286,8 +342,9 @@ export class PdfBuilder {
 
   async save(footerLabel: string): Promise<Uint8Array> {
     const pages = this.doc.getPages();
+    const safeFooterLabel = sanitizePdfText(this.fontRegular, footerLabel);
     pages.forEach((page, index) => {
-      page.drawText(`${footerLabel} — Page ${index + 1} of ${pages.length}`, {
+      page.drawText(`${safeFooterLabel} — Page ${index + 1} of ${pages.length}`, {
         x: MARGIN,
         y: MARGIN - 24,
         size: 8,
