@@ -187,7 +187,7 @@ export type ExtensionMessage =
     }
   | { type: "EXTRACT_LESSON_REQUEST"; lesson: LessonMeta }
   | { type: "EXTRACT_LESSON_RESULT"; lesson: ExtractedLesson }
-  | { type: "START_ARCHIVE"; courseId: string }
+  | { type: "START_ARCHIVE"; courseId: string; moduleId?: string }
   | { type: "CANCEL_ARCHIVE"; jobId: string }
   | { type: "JOB_STATE_UPDATE"; job?: ArchiveJobState }
   | { type: "GET_JOB_STATE"; jobId: string }

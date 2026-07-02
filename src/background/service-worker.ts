@@ -49,11 +49,17 @@ async function handleMessage(
     }
 
     case "START_ARCHIVE": {
+      if (isPipelineActive()) {
+        throw new Error("An archive is already in progress — wait for it to finish or cancel it first.");
+      }
+
       const tabId = await getActiveTabId();
       if (!tabId) throw new Error("No active Skool tab found");
       const tab = await chrome.tabs.get(tabId);
       if (!tab.url) throw new Error("Could not read the current tab's URL");
-      const course = await scanCourseOnce(tabId, tab.url);
+      const fullCourse = await scanCourseOnce(tabId, tab.url);
+      const course = message.moduleId ? filterCourseToModule(fullCourse, message.moduleId) : fullCourse;
+
       const settings = await getSettings();
       activePipeline = new ArchivePipeline(course, tabId, settings);
       await saveJob(activePipeline.job);
@@ -92,6 +98,20 @@ async function handleMessage(
 async function getActiveTabId(): Promise<number | undefined> {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   return tab?.id;
+}
+
+function isPipelineActive(): boolean {
+  if (!activePipeline) return false;
+  const phase = activePipeline.job.phase;
+  return phase !== "done" && phase !== "error" && phase !== "idle";
+}
+
+/** Narrows a full course scan down to a single module, for "archive just
+ *  this classroom" instead of the whole course. */
+function filterCourseToModule(course: CourseSummary, moduleId: string): CourseSummary {
+  const module = course.modules.find((m) => m.id === moduleId);
+  if (!module) throw new Error("That module could not be found — try scanning again.");
+  return { ...course, modules: [module] };
 }
 
 /** If the browser (or the service worker) was closed mid-archive, resume the

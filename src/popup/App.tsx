@@ -11,6 +11,8 @@ export default function App() {
   const [job, setJob] = useState<ArchiveJobState | null>(null);
   const [scanning, setScanning] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [selectedModuleId, setSelectedModuleId] = useState("");
+  const [starting, setStarting] = useState(false);
 
   useEffect(() => {
     detectPage();
@@ -56,16 +58,20 @@ export default function App() {
     }
   }
 
-  async function startArchive(): Promise<void> {
+  async function startArchive(moduleId?: string): Promise<void> {
     setError(null);
+    setStarting(true);
     try {
       const res = await sendRuntimeMessage<{ type: "JOB_STATE_UPDATE"; job: ArchiveJobState }>({
         type: "START_ARCHIVE",
-        courseId: course?.id ?? ""
+        courseId: course?.id ?? "",
+        moduleId
       });
       setJob(res.job);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setStarting(false);
     }
   }
 
@@ -97,9 +103,37 @@ export default function App() {
           {course && !job && (
             <div className="flex flex-col gap-2">
               <CourseSummaryCard title={course.title} moduleCount={course.modules.length} lessonCount={lessonCount} />
-              <button className="btn-primary" onClick={startArchive}>
-                Archive Classroom
+              <button className="btn-primary" onClick={() => startArchive()} disabled={starting}>
+                {starting ? "Starting…" : "Download All"}
               </button>
+
+              <div className="flex items-center gap-2 text-xs text-neutral-400">
+                <div className="h-px flex-1 bg-neutral-200 dark:bg-neutral-700" />
+                or pick one classroom
+                <div className="h-px flex-1 bg-neutral-200 dark:bg-neutral-700" />
+              </div>
+
+              <div className="flex gap-2">
+                <select
+                  className="flex-1 rounded-md border border-neutral-300 dark:border-neutral-600 bg-transparent px-2 py-1.5 text-sm"
+                  value={selectedModuleId}
+                  onChange={(e) => setSelectedModuleId(e.target.value)}
+                >
+                  <option value="">Choose a classroom…</option>
+                  {course.modules.map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.title} ({m.lessons.length})
+                    </option>
+                  ))}
+                </select>
+                <button
+                  className="btn-secondary shrink-0"
+                  onClick={() => startArchive(selectedModuleId)}
+                  disabled={!selectedModuleId || starting}
+                >
+                  Download
+                </button>
+              </div>
             </div>
           )}
 

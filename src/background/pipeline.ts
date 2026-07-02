@@ -123,7 +123,15 @@ export class ArchivePipeline {
       }
     });
 
-    await saveBlobToDownloads(zipBlob, `${sanitizePathSegment(this.course.title)}.zip`);
+    // When archiving a single module (course.modules is narrowed to just it
+    // before the pipeline is constructed — see service-worker.ts), name the
+    // zip after both course and module so it doesn't look like a full-course
+    // export and won't collide with one.
+    const zipName =
+      this.course.modules.length === 1
+        ? `${sanitizePathSegment(this.course.title)} - ${sanitizePathSegment(this.course.modules[0]!.title)}.zip`
+        : `${sanitizePathSegment(this.course.title)}.zip`;
+    await saveBlobToDownloads(zipBlob, zipName);
 
     this.job.phase = "done";
     await this.persist();
