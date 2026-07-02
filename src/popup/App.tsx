@@ -5,14 +5,22 @@ import { formatDuration } from "@/utils/time";
 
 type PageStatus = "checking" | "not-skool" | "not-classroom" | "ready";
 
+/** Extraction has reached (or returned to, after a download) the point where
+ *  the user can choose what to package — as opposed to still scanning or
+ *  actively packaging a specific selection. */
+function isReadyToDownload(job: ArchiveJobState | null): boolean {
+  return job?.phase === "extracted" || job?.phase === "packaging";
+}
+
 export default function App() {
   const [status, setStatus] = useState<PageStatus>("checking");
   const [course, setCourse] = useState<CourseSummary | null>(null);
   const [job, setJob] = useState<ArchiveJobState | null>(null);
   const [scanning, setScanning] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [selectedModuleId, setSelectedModuleId] = useState("");
   const [starting, setStarting] = useState(false);
+  const [downloading, setDownloading] = useState(false);
+  const [selectedModuleId, setSelectedModuleId] = useState("");
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     detectPage();
@@ -58,20 +66,43 @@ export default function App() {
     }
   }
 
-  async function startArchive(moduleId?: string): Promise<void> {
+  /** Extracts every lesson in the course and caches it. Does not download
+   *  anything by itself — once it reaches the "extracted" phase, the user
+   *  picks "download all" or a specific classroom below. */
+  async function startExtraction(): Promise<void> {
     setError(null);
     setStarting(true);
     try {
       const res = await sendRuntimeMessage<{ type: "JOB_STATE_UPDATE"; job: ArchiveJobState }>({
         type: "START_ARCHIVE",
-        courseId: course?.id ?? "",
-        moduleId
+        courseId: course?.id ?? ""
       });
       setJob(res.job);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setStarting(false);
+    }
+  }
+
+  /** Builds and downloads a zip from the already-extracted job — everything
+   *  (moduleId omitted) or just one classroom. Can be called more than once
+   *  for the same completed extraction. */
+  async function downloadArchive(moduleId?: string): Promise<void> {
+    if (!job) return;
+    setError(null);
+    setDownloading(true);
+    try {
+      const res = await sendRuntimeMessage<{ type: "JOB_STATE_UPDATE"; job: ArchiveJobState }>({
+        type: "DOWNLOAD_ARCHIVE",
+        jobId: job.id,
+        moduleId
+      });
+      setJob(res.job);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setDownloading(false);
     }
   }
 
@@ -94,7 +125,7 @@ export default function App() {
 
       {status === "ready" && (
         <>
-          {!course && (
+          {!course && !job && (
             <button className="btn-primary" onClick={scanCourse} disabled={scanning}>
               {scanning ? "Scanning…" : "Scan Classroom"}
             </button>
@@ -103,41 +134,23 @@ export default function App() {
           {course && !job && (
             <div className="flex flex-col gap-2">
               <CourseSummaryCard title={course.title} moduleCount={course.modules.length} lessonCount={lessonCount} />
-              <button className="btn-primary" onClick={() => startArchive()} disabled={starting}>
-                {starting ? "Starting…" : "Download All"}
+              <button className="btn-primary" onClick={startExtraction} disabled={starting}>
+                {starting ? "Starting…" : "Extract All Lessons"}
               </button>
-
-              <div className="flex items-center gap-2 text-xs text-neutral-400">
-                <div className="h-px flex-1 bg-neutral-200 dark:bg-neutral-700" />
-                or pick one classroom
-                <div className="h-px flex-1 bg-neutral-200 dark:bg-neutral-700" />
-              </div>
-
-              <div className="flex gap-2">
-                <select
-                  className="flex-1 rounded-md border border-neutral-300 dark:border-neutral-600 bg-transparent px-2 py-1.5 text-sm"
-                  value={selectedModuleId}
-                  onChange={(e) => setSelectedModuleId(e.target.value)}
-                >
-                  <option value="">Choose a classroom…</option>
-                  {course.modules.map((m) => (
-                    <option key={m.id} value={m.id}>
-                      {m.title} ({m.lessons.length})
-                    </option>
-                  ))}
-                </select>
-                <button
-                  className="btn-secondary shrink-0"
-                  onClick={() => startArchive(selectedModuleId)}
-                  disabled={!selectedModuleId || starting}
-                >
-                  Download
-                </button>
-              </div>
             </div>
           )}
 
-          {job && <ProgressPanel job={job} onCancel={cancelArchive} />}
+          {job && !isReadyToDownload(job) && <ProgressPanel job={job} onCancel={cancelArchive} />}
+
+          {job && isReadyToDownload(job) && (
+            <DownloadChoices
+              job={job}
+              downloading={downloading}
+              selectedModuleId={selectedModuleId}
+              onSelectModule={setSelectedModuleId}
+              onDownload={downloadArchive}
+            />
+          )}
         </>
       )}
 
@@ -208,11 +221,75 @@ function ProgressPanel({ job, onCancel }: { job: ArchiveJobState; onCancel: () =
         {job.estimatedRemainingMs !== undefined && <span>~{formatDuration(job.estimatedRemainingMs)} left</span>}
       </div>
 
-      {job.phase !== "done" && (
-        <button className="btn-secondary" onClick={onCancel}>
-          Cancel
+      <button className="btn-secondary" onClick={onCancel}>
+        Cancel
+      </button>
+
+      <LogsPanel logs={job.logs} />
+    </div>
+  );
+}
+
+/** Shown once extraction has finished (or between/after downloads): lets the
+ *  user pick "download all" or a specific classroom, without re-extracting
+ *  anything — the lessons are already cached from the extraction step. */
+function DownloadChoices({
+  job,
+  downloading,
+  selectedModuleId,
+  onSelectModule,
+  onDownload
+}: {
+  job: ArchiveJobState;
+  downloading: boolean;
+  selectedModuleId: string;
+  onSelectModule: (id: string) => void;
+  onDownload: (moduleId?: string) => void;
+}) {
+  const lessons = Object.values(job.lessons);
+  const completed = lessons.filter((l) => l.status === "completed").length;
+  const failed = lessons.filter((l) => l.status === "failed").length;
+  const packaging = job.phase === "packaging";
+  const busy = downloading || packaging;
+
+  return (
+    <div className="flex flex-col gap-2">
+      <div className="text-xs text-neutral-500">
+        Extracted {completed}/{job.totalLessons} lessons{failed ? ` · ${failed} failed` : ""}
+      </div>
+
+      <button className="btn-primary" onClick={() => onDownload()} disabled={busy}>
+        {packaging ? "Packaging…" : "Download All"}
+      </button>
+
+      <div className="flex items-center gap-2 text-xs text-neutral-400">
+        <div className="h-px flex-1 bg-neutral-200 dark:bg-neutral-700" />
+        or pick one classroom
+        <div className="h-px flex-1 bg-neutral-200 dark:bg-neutral-700" />
+      </div>
+
+      <div className="flex gap-2">
+        <select
+          className="flex-1 rounded-md border border-neutral-300 dark:border-neutral-600 bg-transparent px-2 py-1.5 text-sm"
+          value={selectedModuleId}
+          onChange={(e) => onSelectModule(e.target.value)}
+          disabled={busy}
+        >
+          <option value="">Choose a classroom…</option>
+          {job.course.modules.map((m) => (
+            <option key={m.id} value={m.id}>
+              {m.title} ({m.lessons.length})
+            </option>
+          ))}
+        </select>
+        <button
+          className="btn-secondary shrink-0"
+          onClick={() => onDownload(selectedModuleId)}
+          disabled={!selectedModuleId || busy}
+        >
+          Download
         </button>
-      )}
+      </div>
 
       <LogsPanel logs={job.logs} />
     </div>

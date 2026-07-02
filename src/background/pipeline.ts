@@ -1,23 +1,20 @@
 import { downloadLessonResources } from "@/download/resourceDownloader";
-import { saveBlobToDownloads } from "@/download/downloader";
-import { buildCourseArchive } from "@/exporters/zipPackager";
 import { cacheLesson, getCachedLesson } from "@/storage/lessonCache";
 import { saveJob } from "@/storage/jobStore";
-import type {
-  ArchiveJobState,
-  ArchiveSettings,
-  CourseSummary,
-  ExtractedLesson,
-  LessonMeta
-} from "@/types";
+import type { ArchiveJobState, ArchiveSettings, CourseSummary, ExtractedLesson, LessonMeta } from "@/types";
 import { generateJobId } from "@/utils/id";
 import { logger } from "@/utils/logger";
-import { sanitizePathSegment } from "@/utils/sanitize";
 import { estimateRemainingMs } from "@/utils/time";
 import { broadcastMessage, navigateTab, sendToTab, waitForTabComplete } from "./tabMessaging";
 
 const MAX_ATTEMPTS = 3;
 
+/** Drives scan → per-lesson extract → resource download → cache for the
+ *  whole course, and stops at the "extracted" phase. It deliberately does
+ *  NOT zip or download anything — that's a separate, user-triggered step
+ *  (see background/packaging.ts) so the same extraction can be packaged as
+ *  "everything" or "just this classroom" (possibly more than once) without
+ *  re-extracting. */
 export class ArchivePipeline {
   private cancelled = false;
   readonly job: ArchiveJobState;
@@ -64,9 +61,9 @@ export class ArchivePipeline {
     if (this.job.logs.length > 500) this.job.logs.shift();
   }
 
-  async run(): Promise<Blob | null> {
+  async run(): Promise<void> {
     const allLessons = this.course.modules.flatMap((m) => m.lessons);
-    const extracted: ExtractedLesson[] = [];
+    let completedCount = 0;
 
     for (const meta of allLessons) {
       if (this.cancelled) break;
@@ -75,15 +72,13 @@ export class ArchivePipeline {
       if (state.status === "completed") {
         const cached = await getCachedLesson(this.job.id, meta.id);
         if (cached) {
-          extracted.push(cached);
+          completedCount++;
           continue;
         }
         state.status = "pending";
       }
       if (state.status === "skipped") continue;
 
-      const completedCount = allLessons.filter((l) => this.job.lessons[l.id]!.status === "completed")
-        .length;
       this.job.estimatedRemainingMs = estimateRemainingMs(
         this.job.startTime,
         completedCount,
@@ -91,51 +86,23 @@ export class ArchivePipeline {
       );
 
       const lesson = await this.processLesson(meta);
-      if (lesson) extracted.push(lesson);
+      if (lesson) completedCount++;
       await this.persist();
     }
 
-    if (extracted.length === 0) {
+    if (completedCount === 0) {
       this.job.phase = this.cancelled ? "idle" : "error";
       await this.persist();
-      return null;
+      return;
     }
 
     if (this.cancelled) {
-      this.log("warn", `Cancelled — packaging the ${extracted.length} lesson(s) already extracted.`);
+      this.log("warn", `Cancelled — ${completedCount} lesson(s) already extracted are ready to download.`);
     }
 
-    this.job.phase = "packaging";
-    // Leftover from the last extraction step otherwise — nothing updates it
-    // during packaging, so it'd sit there looking stale/stuck (e.g. "~1s
-    // left") for however long packaging actually takes.
+    this.job.phase = "extracted";
     this.job.estimatedRemainingMs = undefined;
     await this.persist();
-
-    const zipBlob = await buildCourseArchive(this.job.id, this.course, extracted, this.settings, {
-      onLessonPackaged: (lessonId) => {
-        this.log("info", `Packaged ${lessonId}`);
-        // Not awaited — packaging must not pause on it — but persisting here
-        // both gives the popup visible progress during what can otherwise
-        // look like a long stall, and the extra chrome.storage/runtime
-        // activity helps keep the service worker alive through a long zip.
-        void this.persist();
-      }
-    });
-
-    // When archiving a single module (course.modules is narrowed to just it
-    // before the pipeline is constructed — see service-worker.ts), name the
-    // zip after both course and module so it doesn't look like a full-course
-    // export and won't collide with one.
-    const zipName =
-      this.course.modules.length === 1
-        ? `${sanitizePathSegment(this.course.title)} - ${sanitizePathSegment(this.course.modules[0]!.title)}.zip`
-        : `${sanitizePathSegment(this.course.title)}.zip`;
-    await saveBlobToDownloads(zipBlob, zipName);
-
-    this.job.phase = "done";
-    await this.persist();
-    return zipBlob;
   }
 
   private async processLesson(meta: LessonMeta): Promise<ExtractedLesson | null> {

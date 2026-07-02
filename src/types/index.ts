@@ -112,6 +112,13 @@ export type JobPhase =
   | "generating_pdf"
   | "downloading_videos"
   | "downloading_images"
+  // Every lesson has been extracted and cached, but nothing has been zipped
+  // or downloaded yet — the user picks "download all" or a specific
+  // classroom next, and packaging only happens then (see
+  // background/packaging.ts). Lets the same extraction be packaged more
+  // than once (e.g. the whole course, then later just one classroom) without
+  // re-extracting anything.
+  | "extracted"
   | "packaging"
   | "done"
   | "error";
@@ -187,8 +194,13 @@ export type ExtensionMessage =
     }
   | { type: "EXTRACT_LESSON_REQUEST"; lesson: LessonMeta }
   | { type: "EXTRACT_LESSON_RESULT"; lesson: ExtractedLesson }
-  | { type: "START_ARCHIVE"; courseId: string; moduleId?: string }
+  | { type: "START_ARCHIVE"; courseId: string }
   | { type: "CANCEL_ARCHIVE"; jobId: string }
+  // Sent once a job has reached the "extracted" phase — builds and
+  // downloads a zip from already-cached lessons, either the whole course
+  // (no moduleId) or just one classroom. Can be sent more than once for the
+  // same job.
+  | { type: "DOWNLOAD_ARCHIVE"; jobId: string; moduleId?: string }
   | { type: "JOB_STATE_UPDATE"; job?: ArchiveJobState }
   | { type: "GET_JOB_STATE"; jobId: string }
   | { type: "GET_SETTINGS" }

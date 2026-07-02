@@ -12,6 +12,11 @@ const PACKAGE_VERSION = "0.1.0";
 
 export interface PackagingProgress {
   onLessonPackaged?(lessonId: string): void;
+  /** Fired periodically during the final zip write/compression, which for a
+   *  large archive can itself run long enough to look "stuck" — this at
+   *  least gives the caller something to show (and a place to keep pinging
+   *  chrome.* APIs to help the MV3 service worker survive it). */
+  onZipProgress?(percent: number): void;
 }
 
 /** Builds `Course Name.zip` with the structure:
@@ -129,7 +134,9 @@ export async function buildCourseArchive(
   // savings, and a long CPU-bound task with no chrome.* API calls in between
   // is exactly what risks the MV3 service worker being evicted mid-packaging
   // (which looks like "stuck, no error, no zip"). STORE just packs the bytes.
-  return zip.generateAsync({ type: "blob", compression: "STORE" });
+  return zip.generateAsync({ type: "blob", compression: "STORE" }, (metadata) => {
+    progress.onZipProgress?.(metadata.percent);
+  });
 }
 
 async function buildImageAssetMap(

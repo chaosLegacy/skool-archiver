@@ -2,6 +2,7 @@ import { getCurrentJob, getJob, saveJob } from "@/storage/jobStore";
 import { getSettings, saveSettings } from "@/storage/settingsStore";
 import type { CourseSummary, ExtensionMessage } from "@/types";
 import { scanSkoolCourse } from "./moduleScanner";
+import { packageAndDownloadJob } from "./packaging";
 import { ArchivePipeline } from "./pipeline";
 import { broadcastMessage } from "./tabMessaging";
 
@@ -57,8 +58,10 @@ async function handleMessage(
       if (!tabId) throw new Error("No active Skool tab found");
       const tab = await chrome.tabs.get(tabId);
       if (!tab.url) throw new Error("Could not read the current tab's URL");
-      const fullCourse = await scanCourseOnce(tabId, tab.url);
-      const course = message.moduleId ? filterCourseToModule(fullCourse, message.moduleId) : fullCourse;
+      // Always extracts the whole course — the user picks "all" or a
+      // specific classroom afterwards, when actually packaging/downloading
+      // (see DOWNLOAD_ARCHIVE below), without needing to re-extract.
+      const course = await scanCourseOnce(tabId, tab.url);
 
       const settings = await getSettings();
       activePipeline = new ArchivePipeline(course, tabId, settings);
@@ -73,6 +76,12 @@ async function handleMessage(
     case "CANCEL_ARCHIVE": {
       activePipeline?.cancel();
       return { ok: true };
+    }
+
+    case "DOWNLOAD_ARCHIVE": {
+      await packageAndDownloadJob(message.jobId, message.moduleId);
+      const job = await getJob(message.jobId);
+      return { type: "JOB_STATE_UPDATE", job };
     }
 
     case "GET_JOB_STATE": {
@@ -100,26 +109,21 @@ async function getActiveTabId(): Promise<number | undefined> {
   return tab?.id;
 }
 
+const INACTIVE_PHASES = new Set(["done", "error", "idle", "extracted"]);
+
 function isPipelineActive(): boolean {
   if (!activePipeline) return false;
-  const phase = activePipeline.job.phase;
-  return phase !== "done" && phase !== "error" && phase !== "idle";
+  return !INACTIVE_PHASES.has(activePipeline.job.phase);
 }
 
-/** Narrows a full course scan down to a single module, for "archive just
- *  this classroom" instead of the whole course. */
-function filterCourseToModule(course: CourseSummary, moduleId: string): CourseSummary {
-  const module = course.modules.find((m) => m.id === moduleId);
-  if (!module) throw new Error("That module could not be found — try scanning again.");
-  return { ...course, modules: [module] };
-}
-
-/** If the browser (or the service worker) was closed mid-archive, resume the
- *  last in-progress job automatically instead of starting over: already
- *  completed lessons are read from the IndexedDB cache and skipped. */
+/** If the browser (or the service worker) was closed mid-extraction, resume
+ *  the last in-progress job automatically instead of starting over: already
+ *  completed lessons are read from the IndexedDB cache and skipped. A job
+ *  that already reached "extracted" needs no resuming — it's just waiting
+ *  for the user to choose what to download. */
 async function resumeInterruptedJob(): Promise<void> {
   const job = await getCurrentJob();
-  if (!job || job.phase === "done" || job.phase === "error") return;
+  if (!job || INACTIVE_PHASES.has(job.phase)) return;
 
   const tabId = await getActiveTabId();
   if (!tabId) {
