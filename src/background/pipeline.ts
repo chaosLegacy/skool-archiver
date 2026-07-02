@@ -106,10 +106,21 @@ export class ArchivePipeline {
     }
 
     this.job.phase = "packaging";
+    // Leftover from the last extraction step otherwise — nothing updates it
+    // during packaging, so it'd sit there looking stale/stuck (e.g. "~1s
+    // left") for however long packaging actually takes.
+    this.job.estimatedRemainingMs = undefined;
     await this.persist();
 
     const zipBlob = await buildCourseArchive(this.job.id, this.course, extracted, this.settings, {
-      onLessonPackaged: (lessonId) => this.log("info", `Packaged ${lessonId}`)
+      onLessonPackaged: (lessonId) => {
+        this.log("info", `Packaged ${lessonId}`);
+        // Not awaited — packaging must not pause on it — but persisting here
+        // both gives the popup visible progress during what can otherwise
+        // look like a long stall, and the extra chrome.storage/runtime
+        // activity helps keep the service worker alive through a long zip.
+        void this.persist();
+      }
     });
 
     await saveBlobToDownloads(zipBlob, `${sanitizePathSegment(this.course.title)}.zip`);

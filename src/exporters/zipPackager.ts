@@ -124,7 +124,12 @@ export async function buildCourseArchive(
     )
   );
 
-  return zip.generateAsync({ type: "blob", compression: "DEFLATE" });
+  // Most of the archive's bytes are already-compressed images/videos/PDFs —
+  // re-running DEFLATE over those burns a lot of CPU for negligible size
+  // savings, and a long CPU-bound task with no chrome.* API calls in between
+  // is exactly what risks the MV3 service worker being evicted mid-packaging
+  // (which looks like "stuck, no error, no zip"). STORE just packs the bytes.
+  return zip.generateAsync({ type: "blob", compression: "STORE" });
 }
 
 async function buildImageAssetMap(
