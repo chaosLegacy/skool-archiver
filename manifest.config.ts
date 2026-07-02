@@ -37,7 +37,19 @@ export default defineManifest({
   // unreliable about firing their click handler for JS-dispatched synthetic
   // events (see background/trustedClick.ts). Attaching briefly shows Chrome's
   // "started debugging this browser" banner; that's expected.
-  permissions: ["storage", "downloads", "unlimitedStorage", "activeTab", "scripting", "debugger"],
+  // "offscreen" lets the background create a hidden DOM page — service
+  // workers don't have URL.createObjectURL, so saving a generated zip Blob
+  // via chrome.downloads needs a real document to create that URL in (see
+  // background/downloader.ts / offscreen/offscreen.ts).
+  permissions: [
+    "storage",
+    "downloads",
+    "unlimitedStorage",
+    "activeTab",
+    "scripting",
+    "debugger",
+    "offscreen"
+  ],
   // Skool serves images/videos from asset subdomains (e.g. assets.skool.com),
   // distinct from the www.skool.com/skool.com pages the content script runs
   // on. Fetching those from the background needs their own host permission

@@ -201,6 +201,16 @@ export type ExtensionMessage =
   // (no moduleId) or just one classroom. Can be sent more than once for the
   // same job.
   | { type: "DOWNLOAD_ARCHIVE"; jobId: string; moduleId?: string }
+  // Service workers have no URL.createObjectURL — the background asks the
+  // offscreen document (a hidden page with a real DOM) to save a Blob via
+  // chrome.downloads instead. See offscreen/offscreen.ts.
+  | {
+      type: "SAVE_BLOB_TO_DOWNLOADS_REQUEST";
+      blob: Blob;
+      filename: string;
+      conflictAction?: chrome.downloads.FilenameConflictAction;
+    }
+  | { type: "SAVE_BLOB_TO_DOWNLOADS_RESULT"; downloadId: number; filename: string }
   | { type: "JOB_STATE_UPDATE"; job?: ArchiveJobState }
   | { type: "GET_JOB_STATE"; jobId: string }
   | { type: "GET_SETTINGS" }
