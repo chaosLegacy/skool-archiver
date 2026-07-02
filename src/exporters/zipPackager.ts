@@ -17,6 +17,31 @@ export interface PackagingProgress {
    *  least gives the caller something to show (and a place to keep pinging
    *  chrome.* APIs to help the MV3 service worker survive it). */
   onZipProgress?(percent: number): void;
+  /** A single cached file failed to read (including an IndexedDB timeout —
+   *  see storage/db.ts) — that file is skipped rather than aborting the
+   *  whole archive over one bad resource. */
+  onWarning?(message: string): void;
+}
+
+/** getCachedFile can now reject (an IndexedDB read that times out — a rare
+ *  but real failure mode, see storage/db.ts's withTimeout). One missing or
+ *  broken cached file shouldn't sink packaging every other lesson in the
+ *  archive, so failures here are reported and skipped rather than thrown. */
+async function safeGetCachedFile(
+  jobId: string,
+  lessonId: string,
+  kind: string,
+  name: string,
+  progress: PackagingProgress
+): Promise<Blob | undefined> {
+  try {
+    return await getCachedFile(jobId, lessonId, kind, name);
+  } catch (error) {
+    progress.onWarning?.(
+      `Skipped ${kind} "${name}" for lesson ${lessonId}: ${error instanceof Error ? error.message : String(error)}`
+    );
+    return undefined;
+  }
 }
 
 /** Builds `Course Name.zip` with the structure:
@@ -50,7 +75,7 @@ export async function buildCourseArchive(
     for (const image of lesson.images) {
       if (!image.localPath) continue;
       const name = image.localPath.split("/").pop()!;
-      const blob = await getCachedFile(jobId, lesson.id, "image", name);
+      const blob = await safeGetCachedFile(jobId, lesson.id, "image", name, progress);
       if (blob) {
         imagesFolder.file(name, blob);
         imageCount++;
@@ -60,7 +85,7 @@ export async function buildCourseArchive(
     for (const video of lesson.videos) {
       if (!video.protected && video.sourceUrl?.startsWith("videos/")) {
         const name = video.sourceUrl.split("/").pop()!;
-        const blob = await getCachedFile(jobId, lesson.id, "video", name);
+        const blob = await safeGetCachedFile(jobId, lesson.id, "video", name, progress);
         if (blob) {
           videosFolder.file(name, blob);
           videoCount++;
@@ -70,7 +95,7 @@ export async function buildCourseArchive(
       // thumbnail is a plain image and downloads like any other.
       if (video.thumbnailLocalPath) {
         const name = video.thumbnailLocalPath.split("/").pop()!;
-        const blob = await getCachedFile(jobId, lesson.id, "image", name);
+        const blob = await safeGetCachedFile(jobId, lesson.id, "image", name, progress);
         if (blob) {
           imagesFolder.file(name, blob);
           imageCount++;
@@ -81,14 +106,14 @@ export async function buildCourseArchive(
     for (const attachment of lesson.attachments) {
       if (!attachment.localPath) continue;
       const name = attachment.localPath.split("/").pop()!;
-      const blob = await getCachedFile(jobId, lesson.id, "attachment", name);
+      const blob = await safeGetCachedFile(jobId, lesson.id, "attachment", name, progress);
       if (blob) moduleFolder.file(name, blob);
     }
 
     const relativeLesson = withRelativeImagePaths(lesson, "../../");
 
     if (settings.exportFormats.pdf) {
-      const imageAssets = await buildImageAssetMap(jobId, lesson);
+      const imageAssets = await buildImageAssetMap(jobId, lesson, progress);
       const pdfBlob = await exportLessonToPdf(lesson, imageAssets);
       moduleFolder.file(`${filename}.pdf`, pdfBlob);
       pdfCount++;
@@ -141,13 +166,14 @@ export async function buildCourseArchive(
 
 async function buildImageAssetMap(
   jobId: string,
-  lesson: ExtractedLesson
+  lesson: ExtractedLesson,
+  progress: PackagingProgress
 ): Promise<Map<string, ImageAsset>> {
   const map = new Map<string, ImageAsset>();
   for (const image of lesson.images) {
     if (!image.localPath) continue;
     const name = image.localPath.split("/").pop()!;
-    const blob = await getCachedFile(jobId, lesson.id, "image", name);
+    const blob = await safeGetCachedFile(jobId, lesson.id, "image", name, progress);
     if (!blob) continue;
     const bytes = new Uint8Array(await blob.arrayBuffer());
     map.set(image.originalUrl, { bytes, mimeType: blob.type || "image/png" });
@@ -155,7 +181,7 @@ async function buildImageAssetMap(
   for (const video of lesson.videos) {
     if (!video.thumbnailLocalPath || !video.thumbnailUrl) continue;
     const name = video.thumbnailLocalPath.split("/").pop()!;
-    const blob = await getCachedFile(jobId, lesson.id, "image", name);
+    const blob = await safeGetCachedFile(jobId, lesson.id, "image", name, progress);
     if (!blob) continue;
     const bytes = new Uint8Array(await blob.arrayBuffer());
     map.set(video.thumbnailUrl, { bytes, mimeType: blob.type || "image/jpeg" });

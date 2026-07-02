@@ -4,6 +4,7 @@ import { getCachedLesson } from "@/storage/lessonCache";
 import { getJob, saveJob } from "@/storage/jobStore";
 import { getSettings } from "@/storage/settingsStore";
 import type { ArchiveJobState, ExtractedLesson } from "@/types";
+import { logger } from "@/utils/logger";
 import { sanitizePathSegment } from "@/utils/sanitize";
 import { broadcastMessage } from "./tabMessaging";
 
@@ -43,10 +44,17 @@ export async function packageAndDownloadJob(jobId: string, moduleId?: string): P
   let lastPersistedPercent = -10;
   const courseForZip = { ...job.course, modules };
   const zipBlob = await buildCourseArchive(jobId, courseForZip, extracted, settings, {
-    onLessonPackaged: () => void persist(job),
+    onLessonPackaged: (lessonId) => {
+      pushLog(job, "info", `Packaged ${lessonId}`);
+      void persist(job);
+    },
     onZipProgress: (percent) => {
       if (percent - lastPersistedPercent < 5) return;
       lastPersistedPercent = percent;
+      void persist(job);
+    },
+    onWarning: (message) => {
+      pushLog(job, "warn", message);
       void persist(job);
     }
   });
@@ -65,4 +73,9 @@ async function persist(job: ArchiveJobState): Promise<void> {
   job.updatedAt = Date.now();
   await saveJob(job);
   broadcastMessage({ type: "JOB_STATE_UPDATE", job });
+}
+
+function pushLog(job: ArchiveJobState, level: "info" | "warn" | "error", message: string): void {
+  job.logs.push(logger[level](message));
+  if (job.logs.length > 500) job.logs.shift();
 }
