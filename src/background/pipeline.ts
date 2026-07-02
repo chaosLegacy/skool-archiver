@@ -69,7 +69,7 @@ export class ArchivePipeline {
     const extracted: ExtractedLesson[] = [];
 
     for (const meta of allLessons) {
-      if (this.cancelled) return null;
+      if (this.cancelled) break;
 
       const state = this.job.lessons[meta.id]!;
       if (state.status === "completed") {
@@ -95,7 +95,15 @@ export class ArchivePipeline {
       await this.persist();
     }
 
-    if (this.cancelled) return null;
+    if (extracted.length === 0) {
+      this.job.phase = this.cancelled ? "idle" : "error";
+      await this.persist();
+      return null;
+    }
+
+    if (this.cancelled) {
+      this.log("warn", `Cancelled — packaging the ${extracted.length} lesson(s) already extracted.`);
+    }
 
     this.job.phase = "packaging";
     await this.persist();
