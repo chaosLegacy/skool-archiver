@@ -1,5 +1,5 @@
 import { getExtractorForUrl } from "@/extractors";
-import { clickModuleEntry, findModuleEntries, scanVisibleLessons } from "@/extractors/skool/scanner";
+import { findModuleEntries, getModuleEntryPosition, waitThenScanAllLessons } from "@/extractors/skool/scanner";
 import type { ExtensionMessage, ExtractedLesson } from "@/types";
 
 const extractor = getExtractorForUrl(window.location.href);
@@ -31,12 +31,19 @@ async function handleMessage(message: ExtensionMessage): Promise<ExtensionMessag
     case "GET_MODULE_ENTRIES":
       return { type: "MODULE_ENTRIES_RESULT", entries: findModuleEntries() };
 
-    case "CLICK_MODULE_ENTRY":
-      clickModuleEntry(message.index);
-      return { type: "PING" };
+    case "GET_MODULE_ENTRY_POSITION": {
+      const position = await getModuleEntryPosition(message.index);
+      return { type: "MODULE_ENTRY_POSITION_RESULT", ...position };
+    }
 
-    case "SCAN_VISIBLE_LESSONS_REQUEST":
-      return { type: "VISIBLE_LESSONS_RESULT", lessons: scanVisibleLessons() };
+    case "SCAN_VISIBLE_LESSONS_REQUEST": {
+      // If a click causes a real page navigation, this script instance (and
+      // this whole poll) gets torn down mid-flight — the background caller
+      // handles that by falling back to a fresh request once the new page's
+      // content script has settled.
+      const lessons = await waitThenScanAllLessons();
+      return { type: "VISIBLE_LESSONS_RESULT", lessons };
+    }
 
     case "EXTRACT_LESSON_REQUEST": {
       if (!extractor) throw new Error("This page is not a Skool classroom.");

@@ -9,6 +9,10 @@ export interface VideoRef {
   embedUrl?: string;
   title?: string;
   thumbnailUrl?: string;
+  /** Populated once the (non-video) preview thumbnail image is downloaded,
+   *  relative path inside the archive. This is just a still preview picture,
+   *  never the protected video stream itself. */
+  thumbnailLocalPath?: string;
   /** True when the extension determined the stream cannot be saved without bypassing protections. */
   protected: boolean;
   reason?: string;
@@ -174,7 +178,8 @@ export type ExtensionMessage =
   // page — see background/moduleScanner.ts.
   | { type: "GET_MODULE_ENTRIES" }
   | { type: "MODULE_ENTRIES_RESULT"; entries: { index: number; title: string }[] }
-  | { type: "CLICK_MODULE_ENTRY"; index: number }
+  | { type: "GET_MODULE_ENTRY_POSITION"; index: number }
+  | { type: "MODULE_ENTRY_POSITION_RESULT"; x: number; y: number }
   | { type: "SCAN_VISIBLE_LESSONS_REQUEST" }
   | {
       type: "VISIBLE_LESSONS_RESULT";

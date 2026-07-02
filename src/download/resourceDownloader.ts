@@ -49,10 +49,28 @@ export async function downloadLessonResources(
           })
       )
     : [];
-  const videos = resources.videos.map((v) => {
+  const withDownloadedSource = resources.videos.map((v) => {
     if (v.protected || !v.sourceUrl) return v;
     return videoResults.find((r) => r.sourceUrl === v.sourceUrl || r.embedUrl === v.embedUrl) ?? v;
   });
+
+  // The video itself can't be saved for protected/embedded providers, but its
+  // preview thumbnail is just a plain still image — fetching that (never the
+  // video stream) at least gives the PDF/HTML something to show.
+  const videos = options.downloadImages
+    ? await mapWithConcurrency(withDownloadedSource, options.maxParallel, (video, index) => {
+        if (!video.protected || !video.thumbnailUrl) return Promise.resolve(video);
+        return downloadOne(
+          jobId,
+          lessonId,
+          "image",
+          `${lessonId}-video-thumb-${index}${extOf(video.thumbnailUrl)}`,
+          video.thumbnailUrl
+        )
+          .then((thumbnailLocalPath) => ({ ...video, thumbnailLocalPath }))
+          .catch(() => video);
+      })
+    : withDownloadedSource;
 
   const attachments = await mapWithConcurrency(resources.attachments, options.maxParallel, (attachment) =>
     downloadOne(

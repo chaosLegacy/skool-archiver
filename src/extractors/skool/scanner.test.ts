@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { clickModuleEntry, findModuleEntries, scanVisibleLessons } from "./scanner";
+import {
+  findModuleEntries,
+  getModuleEntryPosition,
+  scanAllLessonsWithScroll,
+  scanVisibleLessons
+} from "./scanner";
 
 describe("findModuleEntries", () => {
   it("reads title text from click-only module cards (no href)", () => {
@@ -20,23 +25,22 @@ describe("findModuleEntries", () => {
       { index: 1, title: "Q&A with Dan" }
     ]);
   });
+});
 
-  it("clicks the card at the requested index", () => {
+describe("getModuleEntryPosition", () => {
+  it("returns on-screen coordinates for the card at the requested index", async () => {
     document.body.innerHTML = `
       <div role="button" aria-roledescription="sortable">A</div>
       <div role="button" aria-roledescription="sortable">B</div>
     `;
-    let clicked = "";
-    document.querySelectorAll('[role="button"]')[1]!.addEventListener("click", () => {
-      clicked = "B";
-    });
-    clickModuleEntry(1);
-    expect(clicked).toBe("B");
+    const position = await getModuleEntryPosition(1);
+    expect(typeof position.x).toBe("number");
+    expect(typeof position.y).toBe("number");
   });
 
-  it("throws for an out-of-range index", () => {
+  it("throws for an out-of-range index", async () => {
     document.body.innerHTML = "";
-    expect(() => clickModuleEntry(0)).toThrow(/No module card/);
+    await expect(getModuleEntryPosition(0)).rejects.toThrow(/No module card/);
   });
 });
 
@@ -62,5 +66,16 @@ describe("scanVisibleLessons", () => {
   it("returns an empty list when no lesson links are present", () => {
     document.body.innerHTML = "<div>nothing here</div>";
     expect(scanVisibleLessons()).toEqual([]);
+  });
+});
+
+describe("scanAllLessonsWithScroll", () => {
+  it("returns lessons already present without hanging when nothing more can be scrolled into view", async () => {
+    document.body.innerHTML = `
+      <a href="/g/classroom/1?md=a">Lesson A</a>
+      <a href="/g/classroom/1?md=b">Lesson B</a>
+    `;
+    const lessons = await scanAllLessonsWithScroll(2000);
+    expect(lessons).toHaveLength(2);
   });
 });

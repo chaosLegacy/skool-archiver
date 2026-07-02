@@ -72,9 +72,14 @@ async function renderBlock(
     }
     case "video": {
       if (block.ref.protected) {
-        builder.addParagraph(
-          `[Video not included: ${block.ref.reason ?? "protected stream"}]`
-        );
+        const asset = block.ref.thumbnailUrl ? imageAssets.get(block.ref.thumbnailUrl) : undefined;
+        if (asset) {
+          await builder.addImage(asset.bytes, asset.mimeType, block.ref.title);
+        }
+        builder.addParagraph(`[Video not included: ${block.ref.reason ?? "protected stream"}]`);
+        if (block.ref.embedUrl) {
+          builder.addLink(`Watch: ${block.ref.title ?? block.ref.provider}`, block.ref.embedUrl);
+        }
       } else if (block.ref.sourceUrl) {
         builder.addLink(`Video: ${block.ref.title ?? block.ref.provider}`, block.ref.sourceUrl);
       }

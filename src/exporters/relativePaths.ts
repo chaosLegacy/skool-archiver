@@ -10,8 +10,12 @@ export function withRelativeImagePaths(lesson: ExtractedLesson, prefix: string):
     if (block.type === "image") {
       return { ...block, ref: { ...block.ref, localPath: rewrite(block.ref.localPath) } };
     }
-    if (block.type === "video" && block.ref.sourceUrl?.startsWith("videos/")) {
-      return { ...block, ref: { ...block.ref, sourceUrl: rewrite(block.ref.sourceUrl) } };
+    if (block.type === "video") {
+      const sourceUrl = block.ref.sourceUrl?.startsWith("videos/")
+        ? rewrite(block.ref.sourceUrl)
+        : block.ref.sourceUrl;
+      const thumbnailLocalPath = rewrite(block.ref.thumbnailLocalPath);
+      return { ...block, ref: { ...block.ref, sourceUrl, thumbnailLocalPath } };
     }
     return block;
   });

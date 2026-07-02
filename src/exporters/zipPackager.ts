@@ -53,12 +53,23 @@ export async function buildCourseArchive(
     }
 
     for (const video of lesson.videos) {
-      if (video.protected || !video.sourceUrl?.startsWith("videos/")) continue;
-      const name = video.sourceUrl.split("/").pop()!;
-      const blob = await getCachedFile(jobId, lesson.id, "video", name);
-      if (blob) {
-        videosFolder.file(name, blob);
-        videoCount++;
+      if (!video.protected && video.sourceUrl?.startsWith("videos/")) {
+        const name = video.sourceUrl.split("/").pop()!;
+        const blob = await getCachedFile(jobId, lesson.id, "video", name);
+        if (blob) {
+          videosFolder.file(name, blob);
+          videoCount++;
+        }
+      }
+      // Protected/embedded videos can't be saved, but their still preview
+      // thumbnail is a plain image and downloads like any other.
+      if (video.thumbnailLocalPath) {
+        const name = video.thumbnailLocalPath.split("/").pop()!;
+        const blob = await getCachedFile(jobId, lesson.id, "image", name);
+        if (blob) {
+          imagesFolder.file(name, blob);
+          imageCount++;
+        }
       }
     }
 
@@ -128,6 +139,14 @@ async function buildImageAssetMap(
     if (!blob) continue;
     const bytes = new Uint8Array(await blob.arrayBuffer());
     map.set(image.originalUrl, { bytes, mimeType: blob.type || "image/png" });
+  }
+  for (const video of lesson.videos) {
+    if (!video.thumbnailLocalPath || !video.thumbnailUrl) continue;
+    const name = video.thumbnailLocalPath.split("/").pop()!;
+    const blob = await getCachedFile(jobId, lesson.id, "image", name);
+    if (!blob) continue;
+    const bytes = new Uint8Array(await blob.arrayBuffer());
+    map.set(video.thumbnailUrl, { bytes, mimeType: blob.type || "image/jpeg" });
   }
   return map;
 }

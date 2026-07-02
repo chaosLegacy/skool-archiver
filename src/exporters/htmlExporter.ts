@@ -42,9 +42,19 @@ function renderBlock(block: ContentBlock): string {
       )}" />${block.ref.alt ? `<figcaption>${escapeHtml(block.ref.alt)}</figcaption>` : ""}</figure>`;
     case "video":
       if (block.ref.protected) {
-        return `<p class="video-unavailable">Video not included: ${escapeHtml(
+        const thumb = block.ref.thumbnailLocalPath
+          ? `<img src="${escapeHtml(block.ref.thumbnailLocalPath)}" alt="${escapeHtml(
+              block.ref.title ?? "Video thumbnail"
+            )}" />`
+          : "";
+        const watchLink = block.ref.embedUrl
+          ? `<p><a href="${escapeHtml(block.ref.embedUrl)}">Watch: ${escapeHtml(
+              block.ref.title ?? block.ref.provider
+            )}</a></p>`
+          : "";
+        return `<figure class="video-unavailable">${thumb}<figcaption>Video not included: ${escapeHtml(
           block.ref.reason ?? "protected stream"
-        )}</p>`;
+        )}</figcaption>${watchLink}</figure>`;
       }
       return `<video controls src="${escapeHtml(block.ref.sourceUrl ?? "")}"></video>`;
     default:

@@ -27,10 +27,16 @@ function renderBlock(block: ContentBlock): string {
     }
     case "image":
       return `![${block.ref.alt ?? ""}](${block.ref.localPath ?? block.ref.originalUrl})`;
-    case "video":
-      return block.ref.protected
-        ? `_Video not included: ${block.ref.reason ?? "protected stream"}_`
-        : `[Video](${block.ref.sourceUrl ?? block.ref.embedUrl ?? ""})`;
+    case "video": {
+      if (!block.ref.protected) return `[Video](${block.ref.sourceUrl ?? block.ref.embedUrl ?? ""})`;
+      const thumb = block.ref.thumbnailLocalPath
+        ? `![${block.ref.title ?? "Video thumbnail"}](${block.ref.thumbnailLocalPath})\n\n`
+        : "";
+      const watchLink = block.ref.embedUrl
+        ? `\n\n[Watch: ${block.ref.title ?? block.ref.provider}](${block.ref.embedUrl})`
+        : "";
+      return `${thumb}_Video not included: ${block.ref.reason ?? "protected stream"}_${watchLink}`;
+    }
     default:
       return "";
   }

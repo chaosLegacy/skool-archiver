@@ -11,9 +11,22 @@ import { extractImage } from "./images";
 import { extractAttachment, extractLink, isAttachmentLink } from "./links";
 import { extractQuote } from "./quotes";
 import { extractTable } from "./tables";
-import { extractHtml5Video, extractIframeVideo } from "./videos";
+import { extractHtml5Video, extractIframeVideo, extractThumbnailVideo } from "./videos";
 
 const HEADING_TAGS = new Set(["H1", "H2", "H3", "H4", "H5", "H6"]);
+const PARAGRAPH_FALLBACK_TAGS = new Set(["DIV", "SPAN"]);
+
+/** True only when the element's own child list includes a non-whitespace
+ *  text node — not just text inherited from nested elements. This targets
+ *  apps (Skool included) that use a plain `<div>`/`<span>` as their
+ *  "paragraph" instead of `<p>`, while a purely structural wrapper div
+ *  (all-element children, no text of its own) still falls through so its
+ *  text-bearing descendant gets picked up instead — no double-counting. */
+function hasOwnText(el: Element): boolean {
+  return Array.from(el.childNodes).some(
+    (node) => node.nodeType === Node.TEXT_NODE && (node.textContent ?? "").trim().length > 0
+  );
+}
 
 export interface BodyExtractionResult {
   blocks: ContentBlock[];
@@ -44,6 +57,7 @@ export function extractBody(root: HTMLElement): BodyExtractionResult {
       node = walker.nextNode() as Element | null;
       continue;
     }
+    const thumbnailRef = el.tagName === "DIV" ? extractThumbnailVideo(el as HTMLElement) : null;
 
     if (HEADING_TAGS.has(el.tagName)) {
       const level = Number(el.tagName[1]) as 1 | 2 | 3 | 4 | 5 | 6;
@@ -96,6 +110,14 @@ export function extractBody(root: HTMLElement): BodyExtractionResult {
         const ref = extractLink(el as HTMLAnchorElement);
         if (ref) links.push(ref);
       }
+    } else if (thumbnailRef) {
+      blocks.push({ type: "video", ref: thumbnailRef });
+      videos.push(thumbnailRef);
+      markSubtreeConsumed(el, consumed);
+    } else if (PARAGRAPH_FALLBACK_TAGS.has(el.tagName) && hasOwnText(el)) {
+      const text = textOf(el);
+      if (text) blocks.push({ type: "paragraph", text });
+      collectInlineResources(el, { images, videos, links, attachments, consumed });
     }
 
     node = walker.nextNode() as Element | null;

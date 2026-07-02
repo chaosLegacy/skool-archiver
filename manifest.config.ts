@@ -32,7 +32,12 @@ export default defineManifest({
       run_at: "document_idle"
     }
   ],
-  permissions: ["storage", "downloads", "unlimitedStorage", "activeTab", "scripting"],
+  // "debugger" is required for genuinely trusted clicks on Skool's module
+  // cards — they're react-beautiful-dnd draggables, which are notoriously
+  // unreliable about firing their click handler for JS-dispatched synthetic
+  // events (see background/trustedClick.ts). Attaching briefly shows Chrome's
+  // "started debugging this browser" banner; that's expected.
+  permissions: ["storage", "downloads", "unlimitedStorage", "activeTab", "scripting", "debugger"],
   // Skool serves images/videos from asset subdomains (e.g. assets.skool.com),
   // distinct from the www.skool.com/skool.com pages the content script runs
   // on. Fetching those from the background needs their own host permission

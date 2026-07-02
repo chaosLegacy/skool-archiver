@@ -49,6 +49,28 @@ describe("exportLessonToMarkdown", () => {
     expect(md).toContain("Video not included: protected player");
   });
 
+  it("includes the downloaded thumbnail and a watch link for a protected video", () => {
+    const md = exportLessonToMarkdown(
+      makeLesson({
+        blocks: [
+          {
+            type: "video",
+            ref: {
+              provider: "youtube",
+              protected: true,
+              reason: "click-to-play thumbnail",
+              title: "My Video",
+              thumbnailLocalPath: "images/thumb.jpg",
+              embedUrl: "https://www.youtube.com/watch?v=abc123"
+            }
+          }
+        ]
+      })
+    );
+    expect(md).toContain("![My Video](images/thumb.jpg)");
+    expect(md).toContain("[Watch: My Video](https://www.youtube.com/watch?v=abc123)");
+  });
+
   it("lists links and attachments", () => {
     const md = exportLessonToMarkdown(
       makeLesson({

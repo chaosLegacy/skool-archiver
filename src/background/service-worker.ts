@@ -1,11 +1,27 @@
 import { getCurrentJob, getJob, saveJob } from "@/storage/jobStore";
 import { getSettings, saveSettings } from "@/storage/settingsStore";
-import type { ExtensionMessage } from "@/types";
+import type { CourseSummary, ExtensionMessage } from "@/types";
 import { scanSkoolCourse } from "./moduleScanner";
 import { ArchivePipeline } from "./pipeline";
 import { broadcastMessage } from "./tabMessaging";
 
 let activePipeline: ArchivePipeline | null = null;
+
+/** The scan drives the tab through several click+navigate cycles over many
+ *  seconds. The popup can close mid-scan (it's just a transient UI) without
+ *  stopping it, so if the user reopens the popup and hits Scan again, a
+ *  second scan would race the first one on the same tab and corrupt both.
+ *  Reusing the in-flight promise instead makes a repeat request just wait
+ *  for the scan that's already running. */
+let scanInFlight: Promise<CourseSummary> | null = null;
+
+async function scanCourseOnce(tabId: number, rootUrl: string): Promise<CourseSummary> {
+  if (scanInFlight) return scanInFlight;
+  scanInFlight = scanSkoolCourse(tabId, rootUrl).finally(() => {
+    scanInFlight = null;
+  });
+  return scanInFlight;
+}
 
 chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, sendResponse) => {
   handleMessage(message, sender)
@@ -28,7 +44,7 @@ async function handleMessage(
       if (!tabId) throw new Error("No active Skool tab found");
       const tab = await chrome.tabs.get(tabId);
       if (!tab.url) throw new Error("Could not read the current tab's URL");
-      const course = await scanSkoolCourse(tabId, tab.url);
+      const course = await scanCourseOnce(tabId, tab.url);
       return { type: "SCAN_COURSE_RESULT", course };
     }
 
@@ -37,7 +53,7 @@ async function handleMessage(
       if (!tabId) throw new Error("No active Skool tab found");
       const tab = await chrome.tabs.get(tabId);
       if (!tab.url) throw new Error("Could not read the current tab's URL");
-      const course = await scanSkoolCourse(tabId, tab.url);
+      const course = await scanCourseOnce(tabId, tab.url);
       const settings = await getSettings();
       activePipeline = new ArchivePipeline(course, tabId, settings);
       await saveJob(activePipeline.job);

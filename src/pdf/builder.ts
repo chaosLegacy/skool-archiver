@@ -156,13 +156,20 @@ export class PdfBuilder {
 
   addQuote(text: string, author?: string): void {
     this.ensureSpace(30);
+    const startPage = this.page;
     const startY = this.cursorY;
     this.wrapText(text, this.fontRegular, 11, COLORS.muted, { indent: 16, italic: true });
     if (author) {
       this.wrapText(`— ${author}`, this.fontRegular, 9.5, COLORS.muted, { indent: 16 });
     }
+    // wrapText can trigger a page break partway through a long quote. startY
+    // is only meaningful on startPage — drawing it on a later page (using
+    // this.page, now a different page than the one startY was captured on)
+    // would connect two unrelated coordinate systems into one huge stray
+    // line. If the page changed, just bound the rule to the current page.
+    const top = this.page === startPage ? startY + 12 : PAGE_HEIGHT - MARGIN - HEADER_HEIGHT;
     this.page.drawLine({
-      start: { x: MARGIN, y: startY + 12 },
+      start: { x: MARGIN, y: top },
       end: { x: MARGIN, y: this.cursorY + 4 },
       thickness: 2,
       color: COLORS.border
