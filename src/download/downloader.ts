@@ -35,11 +35,34 @@ async function ensureOffscreenDocument(): Promise<void> {
   return offscreenReady;
 }
 
+async function requestObjectUrl(downloadKey: string, mimeType: string): Promise<string> {
+  const response = (await chrome.runtime.sendMessage({
+    type: "CREATE_OBJECT_URL_REQUEST",
+    downloadKey,
+    mimeType
+  } satisfies ExtensionMessage)) as ExtensionMessage;
+
+  if (response.type === "ERROR") throw new Error(response.message);
+  if (response.type !== "CREATE_OBJECT_URL_RESULT") {
+    throw new Error("Unexpected response while preparing the download.");
+  }
+  return response.objectUrl;
+}
+
+function revokeObjectUrl(objectUrl: string): void {
+  chrome.runtime
+    .sendMessage({ type: "REVOKE_OBJECT_URL_REQUEST", objectUrl } satisfies ExtensionMessage)
+    .catch(() => undefined);
+}
+
 /** Saves data to disk through the Chrome Downloads API (never fabricates a
  *  network request that bypasses auth — the bytes are produced locally from
- *  already-fetched/generated content). The actual save happens in the
- *  offscreen document (see offscreen/offscreen.ts), which needs its own real
- *  DOM to call URL.createObjectURL.
+ *  already-fetched/generated content).
+ *
+ *  chrome.downloads is only available here in the service worker — offscreen
+ *  documents (see offscreen/offscreen.ts) only have chrome.runtime, so this
+ *  asks the offscreen document just to mint a blob: URL from the staged
+ *  bytes, then drives the actual download itself.
  *
  *  The bytes never go through chrome.runtime.sendMessage — its JSON-based
  *  serializer can't reliably carry a large binary payload (a Blob arrives
@@ -61,21 +84,40 @@ export async function saveBlobToDownloads(
   const downloadKey = `dl_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
   await idbSet(STORES.downloads, downloadKey, bytes);
 
+  let objectUrl: string | undefined;
   try {
-    const response = (await chrome.runtime.sendMessage({
-      type: "SAVE_BLOB_TO_DOWNLOADS_REQUEST",
-      downloadKey,
-      mimeType,
-      filename,
-      conflictAction
-    } satisfies ExtensionMessage)) as ExtensionMessage;
+    objectUrl = await requestObjectUrl(downloadKey, mimeType);
 
-    if (response.type === "ERROR") throw new Error(response.message);
-    if (response.type !== "SAVE_BLOB_TO_DOWNLOADS_RESULT") {
-      throw new Error("Unexpected response while saving the download.");
-    }
-    return { downloadId: response.downloadId, filename: response.filename };
+    const downloadId = await new Promise<number>((resolve, reject) => {
+      chrome.downloads.download({ url: objectUrl!, filename, conflictAction, saveAs: false }, (id) => {
+        if (chrome.runtime.lastError || id === undefined) {
+          reject(new Error(chrome.runtime.lastError?.message ?? "Download failed to start"));
+          return;
+        }
+
+        const listener = (delta: chrome.downloads.DownloadDelta): void => {
+          if (delta.id !== id) return;
+          if (delta.state?.current === "complete") {
+            chrome.downloads.onChanged.removeListener(listener);
+            resolve(id);
+          } else if (delta.state?.current === "interrupted") {
+            chrome.downloads.onChanged.removeListener(listener);
+            chrome.downloads.resume(id, () => {
+              if (chrome.runtime.lastError) {
+                reject(new Error(`Download interrupted: ${filename}`));
+              } else {
+                resolve(id);
+              }
+            });
+          }
+        };
+        chrome.downloads.onChanged.addListener(listener);
+      });
+    });
+
+    return { downloadId, filename };
   } finally {
+    if (objectUrl) revokeObjectUrl(objectUrl);
     await idbDelete(STORES.downloads, downloadKey).catch(() => undefined);
   }
 }

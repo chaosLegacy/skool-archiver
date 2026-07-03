@@ -218,24 +218,21 @@ export type ExtensionMessage =
   // same job.
   | { type: "DOWNLOAD_ARCHIVE"; jobId: string; moduleId?: string }
   // Service workers have no URL.createObjectURL — the background asks the
-  // offscreen document (a hidden page with a real DOM) to save the data via
-  // chrome.downloads instead. See offscreen/offscreen.ts. This carries only
-  // a small reference key, not the actual bytes: chrome.runtime.sendMessage
-  // uses a JSON-based serializer that can't reliably carry a large
-  // Blob/Uint8Array payload (a Blob arrives broken — "Overload resolution
-  // failed" on URL.createObjectURL — and a large Uint8Array can fail to
-  // serialize at all — "Could not serialize message"). The actual bytes are
-  // staged in IndexedDB (storage/db.ts STORES.downloads), which the
-  // offscreen document reads directly since it shares the same extension
-  // origin — no messaging involved for the payload itself.
-  | {
-      type: "SAVE_BLOB_TO_DOWNLOADS_REQUEST";
-      downloadKey: string;
-      mimeType: string;
-      filename: string;
-      conflictAction?: chrome.downloads.FilenameConflictAction;
-    }
-  | { type: "SAVE_BLOB_TO_DOWNLOADS_RESULT"; downloadId: number; filename: string }
+  // offscreen document (a hidden page with a real DOM) to create one — but
+  // offscreen documents in turn only have chrome.runtime, not
+  // chrome.downloads, so the actual download call has to happen back in the
+  // service worker. This carries only a small reference key, not the actual
+  // bytes: chrome.runtime.sendMessage uses a JSON-based serializer that
+  // can't reliably carry a large Blob/Uint8Array payload (a Blob arrives
+  // broken — "Overload resolution failed" on URL.createObjectURL — and a
+  // large Uint8Array can fail to serialize at all — "Could not serialize
+  // message"). The actual bytes are staged in IndexedDB (storage/db.ts
+  // STORES.downloads), which the offscreen document reads directly since it
+  // shares the same extension origin — no messaging involved for the
+  // payload itself.
+  | { type: "CREATE_OBJECT_URL_REQUEST"; downloadKey: string; mimeType: string }
+  | { type: "CREATE_OBJECT_URL_RESULT"; objectUrl: string }
+  | { type: "REVOKE_OBJECT_URL_REQUEST"; objectUrl: string }
   | { type: "JOB_STATE_UPDATE"; job?: ArchiveJobState }
   | { type: "GET_JOB_STATE"; jobId: string }
   | { type: "GET_SETTINGS" }
