@@ -88,8 +88,14 @@ async function handleMessage(
         priorScan.status === "scanned" ? priorScan.course : await scanCourseOnce(tabId, tab.url);
       await setScanState({ status: "idle" }); // consumed — extraction progress takes over now
 
+      // Resume the existing job (e.g. after a cancelled/partial extraction)
+      // instead of starting a new one — a fresh job id would miss the
+      // already-cached lessons entirely, since the cache is keyed by job id.
+      const existingJob = await getCurrentJob();
+      const resumable = existingJob?.courseId === course.id ? existingJob : undefined;
+
       const settings = await getSettings();
-      activePipeline = new ArchivePipeline(course, tabId, settings);
+      activePipeline = new ArchivePipeline(course, tabId, settings, resumable);
       await saveJob(activePipeline.job);
       void activePipeline.run().catch((error: unknown) => {
         broadcastMessage({ type: "JOB_STATE_UPDATE", job: activePipeline!.job });

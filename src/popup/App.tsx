@@ -157,9 +157,11 @@ export default function App() {
             <DownloadChoices
               job={job}
               downloading={downloading}
+              starting={starting}
               selectedModuleId={selectedModuleId}
               onSelectModule={setSelectedModuleId}
               onDownload={downloadArchive}
+              onResumeExtraction={startExtraction}
             />
           )}
         </>
@@ -249,27 +251,38 @@ function ProgressPanel({ job, onCancel }: { job: ArchiveJobState; onCancel: () =
 function DownloadChoices({
   job,
   downloading,
+  starting,
   selectedModuleId,
   onSelectModule,
-  onDownload
+  onDownload,
+  onResumeExtraction
 }: {
   job: ArchiveJobState;
   downloading: boolean;
+  starting: boolean;
   selectedModuleId: string;
   onSelectModule: (id: string) => void;
   onDownload: (moduleId?: string) => void;
+  onResumeExtraction: () => void;
 }) {
   const lessons = Object.values(job.lessons);
   const completed = lessons.filter((l) => l.status === "completed").length;
   const failed = lessons.filter((l) => l.status === "failed").length;
   const packaging = job.phase === "packaging";
   const busy = downloading || packaging;
+  const incomplete = completed < job.totalLessons;
 
   return (
     <div className="flex flex-col gap-2">
       <div className="text-xs text-neutral-500">
         Extracted {completed}/{job.totalLessons} lessons{failed ? ` · ${failed} failed` : ""}
       </div>
+
+      {incomplete && (
+        <button className="btn-secondary" onClick={onResumeExtraction} disabled={busy || starting}>
+          {starting ? "Starting…" : `Extract Remaining Lessons (${job.totalLessons - completed})`}
+        </button>
+      )}
 
       <button className="btn-primary" onClick={() => onDownload()} disabled={busy}>
         {packaging ? "Packaging…" : "Download All"}

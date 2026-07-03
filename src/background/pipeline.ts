@@ -62,6 +62,12 @@ export class ArchivePipeline {
   }
 
   async run(): Promise<void> {
+    // Resuming a job that previously reached "extracted" (e.g. after a
+    // cancelled/partial run) — reflect that we're actively working again so
+    // the popup shows progress instead of stale download choices.
+    this.job.phase = "extracting";
+    await this.persist();
+
     const allLessons = this.course.modules.flatMap((m) => m.lessons);
     let completedCount = 0;
 
