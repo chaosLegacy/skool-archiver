@@ -1,3 +1,4 @@
+import { idbGet, STORES } from "@/storage/db";
 import type { ExtensionMessage } from "@/types";
 
 /**
@@ -7,17 +8,18 @@ import type { ExtensionMessage } from "@/types";
  * resulting download off to chrome.downloads (also available here) exactly
  * the same way the background used to do it directly.
  *
- * The message carries raw bytes rather than a Blob on purpose: a Blob
- * constructed in the service worker doesn't survive chrome.runtime.sendMessage
- * as a real Blob instance here, and URL.createObjectURL throws "Overload
- * resolution failed" on whatever it deserializes into. Building the Blob
- * fresh, in this document, from bytes (which do clone correctly) avoids that
- * entirely.
+ * The message carries only a small reference key, not the actual bytes:
+ * chrome.runtime.sendMessage's JSON-based serializer can't reliably carry a
+ * large binary payload — a Blob arrives broken ("Overload resolution
+ * failed" on URL.createObjectURL), and a large Uint8Array can fail to
+ * serialize at all ("Could not serialize message"). The bytes are staged in
+ * IndexedDB instead (see download/downloader.ts), which this document reads
+ * directly since it shares the same extension origin as the service worker.
  */
 chrome.runtime.onMessage.addListener(
   (message: ExtensionMessage, _sender, sendResponse: (response: ExtensionMessage) => void) => {
     if (message.type !== "SAVE_BLOB_TO_DOWNLOADS_REQUEST") return undefined;
-    saveBlob(message.bytes, message.mimeType, message.filename, message.conflictAction)
+    saveBlob(message.downloadKey, message.mimeType, message.filename, message.conflictAction)
       .then(sendResponse)
       .catch((error: unknown) => {
         sendResponse({
@@ -30,11 +32,16 @@ chrome.runtime.onMessage.addListener(
 );
 
 async function saveBlob(
-  bytes: Uint8Array,
+  downloadKey: string,
   mimeType: string,
   filename: string,
   conflictAction: chrome.downloads.FilenameConflictAction = "uniquify"
 ): Promise<ExtensionMessage> {
+  const bytes = await idbGet<Uint8Array>(STORES.downloads, downloadKey);
+  if (!bytes) {
+    throw new Error("Could not find the archive data to download — please try again.");
+  }
+
   const blob = new Blob([bytes as unknown as BlobPart], { type: mimeType });
   const objectUrl = URL.createObjectURL(blob);
 

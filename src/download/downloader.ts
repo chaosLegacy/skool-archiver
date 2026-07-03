@@ -1,3 +1,4 @@
+import { idbDelete, idbSet, STORES } from "@/storage/db";
 import type { ExtensionMessage } from "@/types";
 
 export interface DownloadResult {
@@ -37,12 +38,16 @@ async function ensureOffscreenDocument(): Promise<void> {
 /** Saves data to disk through the Chrome Downloads API (never fabricates a
  *  network request that bypasses auth — the bytes are produced locally from
  *  already-fetched/generated content). The actual save happens in the
- *  offscreen document (see offscreen/offscreen.ts), which builds its own
- *  Blob from these bytes and calls URL.createObjectURL there — a Blob
- *  constructed here in the service worker doesn't survive the trip through
- *  chrome.runtime.sendMessage as a real Blob, which is what causes
- *  URL.createObjectURL's "Overload resolution failed" error on the other
- *  end. A Uint8Array clones correctly, so that's what crosses instead. */
+ *  offscreen document (see offscreen/offscreen.ts), which needs its own real
+ *  DOM to call URL.createObjectURL.
+ *
+ *  The bytes never go through chrome.runtime.sendMessage — its JSON-based
+ *  serializer can't reliably carry a large binary payload (a Blob arrives
+ *  broken, "Overload resolution failed"; a large Uint8Array can fail to
+ *  serialize outright, "Could not serialize message"). Instead they're
+ *  staged in IndexedDB, which both this service worker and the offscreen
+ *  document can read directly since they share the same extension origin —
+ *  only a small reference key crosses the message channel. */
 export async function saveBlobToDownloads(
   bytes: Uint8Array,
   filename: string,
@@ -53,17 +58,24 @@ export async function saveBlobToDownloads(
 ): Promise<DownloadResult> {
   await ensureOffscreenDocument();
 
-  const response = (await chrome.runtime.sendMessage({
-    type: "SAVE_BLOB_TO_DOWNLOADS_REQUEST",
-    bytes,
-    mimeType,
-    filename,
-    conflictAction
-  } satisfies ExtensionMessage)) as ExtensionMessage;
+  const downloadKey = `dl_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+  await idbSet(STORES.downloads, downloadKey, bytes);
 
-  if (response.type === "ERROR") throw new Error(response.message);
-  if (response.type !== "SAVE_BLOB_TO_DOWNLOADS_RESULT") {
-    throw new Error("Unexpected response while saving the download.");
+  try {
+    const response = (await chrome.runtime.sendMessage({
+      type: "SAVE_BLOB_TO_DOWNLOADS_REQUEST",
+      downloadKey,
+      mimeType,
+      filename,
+      conflictAction
+    } satisfies ExtensionMessage)) as ExtensionMessage;
+
+    if (response.type === "ERROR") throw new Error(response.message);
+    if (response.type !== "SAVE_BLOB_TO_DOWNLOADS_RESULT") {
+      throw new Error("Unexpected response while saving the download.");
+    }
+    return { downloadId: response.downloadId, filename: response.filename };
+  } finally {
+    await idbDelete(STORES.downloads, downloadKey).catch(() => undefined);
   }
-  return { downloadId: response.downloadId, filename: response.filename };
 }

@@ -219,15 +219,18 @@ export type ExtensionMessage =
   | { type: "DOWNLOAD_ARCHIVE"; jobId: string; moduleId?: string }
   // Service workers have no URL.createObjectURL — the background asks the
   // offscreen document (a hidden page with a real DOM) to save the data via
-  // chrome.downloads instead. See offscreen/offscreen.ts. This carries raw
-  // bytes rather than a Blob: a Blob constructed in one context doesn't
-  // survive chrome.runtime.sendMessage's serialization as a real Blob on the
-  // other end, and URL.createObjectURL then throws "Overload resolution
-  // failed" on it — a Uint8Array clones correctly, so the offscreen document
-  // constructs its own genuine Blob from it instead.
+  // chrome.downloads instead. See offscreen/offscreen.ts. This carries only
+  // a small reference key, not the actual bytes: chrome.runtime.sendMessage
+  // uses a JSON-based serializer that can't reliably carry a large
+  // Blob/Uint8Array payload (a Blob arrives broken — "Overload resolution
+  // failed" on URL.createObjectURL — and a large Uint8Array can fail to
+  // serialize at all — "Could not serialize message"). The actual bytes are
+  // staged in IndexedDB (storage/db.ts STORES.downloads), which the
+  // offscreen document reads directly since it shares the same extension
+  // origin — no messaging involved for the payload itself.
   | {
       type: "SAVE_BLOB_TO_DOWNLOADS_REQUEST";
-      bytes: Uint8Array;
+      downloadKey: string;
       mimeType: string;
       filename: string;
       conflictAction?: chrome.downloads.FilenameConflictAction;

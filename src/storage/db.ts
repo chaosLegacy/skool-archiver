@@ -1,9 +1,17 @@
 const DB_NAME = "skool-archiver";
-const DB_VERSION = 1;
+// Bumped to 2 to add the `downloads` store — onupgradeneeded only fires when
+// the version increases, so existing installs need this to pick it up.
+const DB_VERSION = 2;
 
 export const STORES = {
   lessons: "lessons", // key: `${jobId}:${lessonId}` -> ExtractedLesson
-  files: "files" // key: `${jobId}:${lessonId}:${kind}:${name}` -> Blob
+  files: "files", // key: `${jobId}:${lessonId}:${kind}:${name}` -> Blob
+  // A generated zip's bytes, staged here so the background and the offscreen
+  // document (see offscreen/offscreen.ts) can share them without ever
+  // passing the bytes through chrome.runtime.sendMessage — its JSON-based
+  // serializer can't reliably carry a large Blob/Uint8Array (see
+  // download/downloader.ts). key: a one-off download id -> Uint8Array
+  downloads: "downloads"
 } as const;
 
 let dbPromise: Promise<IDBDatabase> | null = null;
@@ -19,6 +27,9 @@ function openDb(): Promise<IDBDatabase> {
       }
       if (!db.objectStoreNames.contains(STORES.files)) {
         db.createObjectStore(STORES.files);
+      }
+      if (!db.objectStoreNames.contains(STORES.downloads)) {
+        db.createObjectStore(STORES.downloads);
       }
     };
     request.onsuccess = () => resolve(request.result);
@@ -64,6 +75,19 @@ export async function idbGet<T>(store: string, key: string): Promise<T | undefin
       req.onerror = () => reject(req.error);
     }),
     `get(${store})`
+  );
+}
+
+export async function idbDelete(store: string, key: string): Promise<void> {
+  const db = await openDb();
+  return withTimeout(
+    new Promise((resolve, reject) => {
+      const tx = db.transaction(store, "readwrite");
+      tx.objectStore(store).delete(key);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    }),
+    `delete(${store})`
   );
 }
 
