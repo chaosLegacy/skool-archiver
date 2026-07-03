@@ -44,11 +44,11 @@ describe("buildCourseArchive", () => {
     });
 
     const warnings: string[] = [];
-    const blob = await buildCourseArchive("job-1", course, [lesson], settings, {
+    const bytes = await buildCourseArchive("job-1", course, [lesson], settings, {
       onWarning: (message) => warnings.push(message)
     });
 
-    expect(blob).toBeInstanceOf(Blob);
+    expect(bytes).toBeInstanceOf(Uint8Array);
     expect(warnings).toHaveLength(1);
     expect(warnings[0]).toContain("timed out");
   });
@@ -57,7 +57,7 @@ describe("buildCourseArchive", () => {
     getCachedFileMock.mockResolvedValue(new Blob(["x"]));
 
     const lesson = makeLesson();
-    const blob = await buildCourseArchive("job-1", course, [lesson], settings, {});
-    expect(blob).toBeInstanceOf(Blob);
+    const bytes = await buildCourseArchive("job-1", course, [lesson], settings, {});
+    expect(bytes).toBeInstanceOf(Uint8Array);
   });
 });

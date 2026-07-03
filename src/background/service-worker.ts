@@ -1,6 +1,7 @@
 import { getCurrentJob, getJob, saveJob } from "@/storage/jobStore";
+import { getScanState, saveScanState } from "@/storage/scanStore";
 import { getSettings, saveSettings } from "@/storage/settingsStore";
-import type { CourseSummary, ExtensionMessage } from "@/types";
+import type { CourseSummary, ExtensionMessage, ScanState } from "@/types";
 import { scanSkoolCourse } from "./moduleScanner";
 import { packageAndDownloadJob } from "./packaging";
 import { ArchivePipeline } from "./pipeline";
@@ -16,11 +17,32 @@ let activePipeline: ArchivePipeline | null = null;
  *  for the scan that's already running. */
 let scanInFlight: Promise<CourseSummary> | null = null;
 
+/** Persists + broadcasts scan progress so a popup that was closed (or never
+ *  open) partway through a scan can pick up exactly where things stand
+ *  instead of looking idle until the user starts an entirely new scan. */
+async function setScanState(scan: ScanState): Promise<void> {
+  await saveScanState(scan);
+  broadcastMessage({ type: "SCAN_STATE_UPDATE", scan });
+}
+
 async function scanCourseOnce(tabId: number, rootUrl: string): Promise<CourseSummary> {
   if (scanInFlight) return scanInFlight;
-  scanInFlight = scanSkoolCourse(tabId, rootUrl).finally(() => {
-    scanInFlight = null;
-  });
+  void setScanState({ status: "scanning" });
+  scanInFlight = scanSkoolCourse(tabId, rootUrl)
+    .then(async (course) => {
+      await setScanState({ status: "scanned", course });
+      return course;
+    })
+    .catch(async (error: unknown) => {
+      await setScanState({
+        status: "error",
+        message: error instanceof Error ? error.message : String(error)
+      });
+      throw error;
+    })
+    .finally(() => {
+      scanInFlight = null;
+    });
   return scanInFlight;
 }
 
@@ -58,10 +80,13 @@ async function handleMessage(
       if (!tabId) throw new Error("No active Skool tab found");
       const tab = await chrome.tabs.get(tabId);
       if (!tab.url) throw new Error("Could not read the current tab's URL");
-      // Always extracts the whole course — the user picks "all" or a
-      // specific classroom afterwards, when actually packaging/downloading
-      // (see DOWNLOAD_ARCHIVE below), without needing to re-extract.
-      const course = await scanCourseOnce(tabId, tab.url);
+      // Reuse a course from a scan that already finished (possibly in a
+      // popup that's since closed) rather than repeating the whole
+      // click-through discovery — the user already waited for that once.
+      const priorScan = await getScanState();
+      const course =
+        priorScan.status === "scanned" ? priorScan.course : await scanCourseOnce(tabId, tab.url);
+      await setScanState({ status: "idle" }); // consumed — extraction progress takes over now
 
       const settings = await getSettings();
       activePipeline = new ArchivePipeline(course, tabId, settings);
@@ -87,6 +112,11 @@ async function handleMessage(
     case "GET_JOB_STATE": {
       const job = message.jobId ? await getJob(message.jobId) : await getCurrentJob();
       return { type: "JOB_STATE_UPDATE", job };
+    }
+
+    case "GET_SCAN_STATE": {
+      const scan = await getScanState();
+      return { type: "SCAN_STATE_UPDATE", scan };
     }
 
     case "GET_SETTINGS": {

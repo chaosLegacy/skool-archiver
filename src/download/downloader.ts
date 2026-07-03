@@ -34,22 +34,29 @@ async function ensureOffscreenDocument(): Promise<void> {
   return offscreenReady;
 }
 
-/** Saves a Blob to disk through the Chrome Downloads API (never fabricates a
- *  network request that bypasses auth — the blob is produced locally from
+/** Saves data to disk through the Chrome Downloads API (never fabricates a
+ *  network request that bypasses auth — the bytes are produced locally from
  *  already-fetched/generated content). The actual save happens in the
- *  offscreen document (see offscreen/offscreen.ts); this just relays the
- *  Blob there and back, since chrome.runtime messages support structured
- *  clone (Blob included). */
+ *  offscreen document (see offscreen/offscreen.ts), which builds its own
+ *  Blob from these bytes and calls URL.createObjectURL there — a Blob
+ *  constructed here in the service worker doesn't survive the trip through
+ *  chrome.runtime.sendMessage as a real Blob, which is what causes
+ *  URL.createObjectURL's "Overload resolution failed" error on the other
+ *  end. A Uint8Array clones correctly, so that's what crosses instead. */
 export async function saveBlobToDownloads(
-  blob: Blob,
+  bytes: Uint8Array,
   filename: string,
-  { conflictAction = "uniquify" }: { conflictAction?: chrome.downloads.FilenameConflictAction } = {}
+  {
+    conflictAction = "uniquify",
+    mimeType = "application/zip"
+  }: { conflictAction?: chrome.downloads.FilenameConflictAction; mimeType?: string } = {}
 ): Promise<DownloadResult> {
   await ensureOffscreenDocument();
 
   const response = (await chrome.runtime.sendMessage({
     type: "SAVE_BLOB_TO_DOWNLOADS_REQUEST",
-    blob,
+    bytes,
+    mimeType,
     filename,
     conflictAction
   } satisfies ExtensionMessage)) as ExtensionMessage;

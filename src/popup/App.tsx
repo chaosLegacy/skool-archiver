@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from "react";
-import type { ArchiveJobState, CourseSummary, ExtensionMessage } from "@/types";
+import type { ArchiveJobState, ExtensionMessage, ScanState } from "@/types";
 import { onRuntimeMessage, sendRuntimeMessage } from "@/utils/messaging";
 import { formatDuration } from "@/utils/time";
 
@@ -14,9 +14,15 @@ function isReadyToDownload(job: ArchiveJobState | null): boolean {
 
 export default function App() {
   const [status, setStatus] = useState<PageStatus>("checking");
-  const [course, setCourse] = useState<CourseSummary | null>(null);
+  // Scanning drives the tab through several click+navigate cycles in the
+  // background over many seconds, and can keep running after this popup
+  // closes. Tracking it as shared state fetched from (and broadcast by) the
+  // background — rather than local-only component state — is what lets a
+  // freshly-reopened popup show the scan that's still running, or the
+  // course it just found, instead of looking idle until the user starts an
+  // entirely new scan.
+  const [scan, setScan] = useState<ScanState>({ status: "idle" });
   const [job, setJob] = useState<ArchiveJobState | null>(null);
-  const [scanning, setScanning] = useState(false);
   const [starting, setStarting] = useState(false);
   const [downloading, setDownloading] = useState(false);
   const [selectedModuleId, setSelectedModuleId] = useState("");
@@ -28,11 +34,18 @@ export default function App() {
       type: "GET_JOB_STATE",
       jobId: ""
     }).then((res) => res.job && setJob(res.job));
+    sendRuntimeMessage<{ type: "SCAN_STATE_UPDATE"; scan: ScanState }>({
+      type: "GET_SCAN_STATE"
+    }).then((res) => setScan(res.scan));
 
     return onRuntimeMessage((message: ExtensionMessage) => {
       if (message.type === "JOB_STATE_UPDATE" && message.job) setJob(message.job);
+      if (message.type === "SCAN_STATE_UPDATE") setScan(message.scan);
     });
   }, []);
+
+  const scanning = scan.status === "scanning";
+  const course = scan.status === "scanned" ? scan.course : null;
 
   async function detectPage(): Promise<void> {
     setStatus("checking");
@@ -52,17 +65,15 @@ export default function App() {
   }
 
   async function scanCourse(): Promise<void> {
-    setScanning(true);
     setError(null);
     try {
-      const res = await sendRuntimeMessage<{ type: "SCAN_COURSE_RESULT"; course: CourseSummary }>({
-        type: "SCAN_COURSE_REQUEST"
-      });
-      setCourse(res.course);
+      // The result also arrives via the SCAN_STATE_UPDATE broadcast (which is
+      // what keeps a reopened popup in sync), but awaiting the direct
+      // response too means an immediate failure (e.g. no active tab) still
+      // surfaces right away even before that broadcast round-trips.
+      await sendRuntimeMessage<ExtensionMessage>({ type: "SCAN_COURSE_REQUEST" });
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setScanning(false);
     }
   }
 
@@ -154,7 +165,9 @@ export default function App() {
         </>
       )}
 
-      {error && <InfoBox tone="error">{error}</InfoBox>}
+      {(error || scan.status === "error") && (
+        <InfoBox tone="error">{error ?? (scan.status === "error" ? scan.message : "")}</InfoBox>
+      )}
     </div>
   );
 }
@@ -270,7 +283,7 @@ function DownloadChoices({
 
       <div className="flex gap-2">
         <select
-          className="flex-1 rounded-md border border-neutral-300 dark:border-neutral-600 bg-transparent px-2 py-1.5 text-sm"
+          className="min-w-0 flex-1 rounded-md border border-neutral-300 dark:border-neutral-600 bg-transparent px-2 py-1.5 text-sm"
           value={selectedModuleId}
           onChange={(e) => onSelectModule(e.target.value)}
           disabled={busy}

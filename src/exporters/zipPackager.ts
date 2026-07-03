@@ -53,7 +53,7 @@ export async function buildCourseArchive(
   lessons: ExtractedLesson[],
   settings: ArchiveSettings,
   progress: PackagingProgress = {}
-): Promise<Blob> {
+): Promise<Uint8Array> {
   const zip = new JSZip();
   const courseFolderName = sanitizePathSegment(course.title);
   const root = zip.folder(courseFolderName)!;
@@ -159,7 +159,16 @@ export async function buildCourseArchive(
   // savings, and a long CPU-bound task with no chrome.* API calls in between
   // is exactly what risks the MV3 service worker being evicted mid-packaging
   // (which looks like "stuck, no error, no zip"). STORE just packs the bytes.
-  return zip.generateAsync({ type: "blob", compression: "STORE" }, (metadata) => {
+  //
+  // Generating "uint8array" rather than "blob" matters beyond this function:
+  // a Blob constructed here (in the service worker) has to cross
+  // chrome.runtime.sendMessage to reach the offscreen document that actually
+  // saves it (service workers can't call URL.createObjectURL themselves),
+  // and a Blob doesn't survive that trip as a real Blob on the other end —
+  // URL.createObjectURL then throws "Overload resolution failed" on it. A
+  // typed array clones correctly, so the offscreen document builds its own
+  // genuine Blob from these bytes instead.
+  return zip.generateAsync({ type: "uint8array", compression: "STORE" }, (metadata) => {
     progress.onZipProgress?.(metadata.percent);
   });
 }
